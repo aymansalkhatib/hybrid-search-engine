@@ -1,0 +1,21 @@
+name: ir-project
+
+services:
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    image: ir-project/api-gateway
+    container_name: ir-api-gateway
+    env_file:
+      - path: .env
+        required: true
+    ports:
+      - "${API_GATEWAY_PORT:-8000}:8000"
+    networks:
+      - ir-net
+    restart: unless-stopped
+
+networks:
+  ir-net:
+    driver: bridge

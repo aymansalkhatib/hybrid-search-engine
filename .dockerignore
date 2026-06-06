@@ -1,0 +1,23 @@
+# Keep the build context small & reproducible.
+.git/
+.gitignore
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+.venv/
+venv/
+env/
+
+# Not needed inside images
+docs/
+reports/
+data/
+*.md
+.env
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
