@@ -16,6 +16,21 @@ services:
       - ir-net
     restart: unless-stopped
 
+  preprocessing-service:
+    build:
+      context: .
+      dockerfile: services/preprocessing-service/Dockerfile
+    image: ir-project/preprocessing-service
+    container_name: ir-preprocessing
+    env_file:
+      - path: .env
+        required: true
+    ports:
+      - "${PREPROCESSING_PORT:-8001}:8001"
+    networks:
+      - ir-net
+    restart: unless-stopped
+
 networks:
   ir-net:
     driver: bridge

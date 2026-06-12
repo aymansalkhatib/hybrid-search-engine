@@ -1,5 +1,10 @@
-"""Shared, framework-independent IR utilities (dataset access, etc.)."""
+"""Shared, framework-independent IR utilities.
 
-from shared.ir_common.dataset_loader import DatasetLoader, Doc, Query
+Submodules are imported directly so each carries only its own dependencies and
+stays decoupled (e.g. ``dataset_loader`` needs ``ir_datasets``; ``errors`` needs
+``fastapi``). Import what you need:
 
-__all__ = ["DatasetLoader", "Doc", "Query"]
+    from shared.ir_common.dataset_loader import DatasetLoader
+    from shared.ir_common.errors import install_error_handlers
+    from shared.ir_common.config import find_repo_env
+"""

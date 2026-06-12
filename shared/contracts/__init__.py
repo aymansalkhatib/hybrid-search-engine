@@ -10,10 +10,22 @@ from shared.contracts.common import (
     HealthResponse,
     ServiceInfo,
 )
+from shared.contracts.preprocessing import (
+    PreprocessBatchRequest,
+    PreprocessBatchResponse,
+    PreprocessOptions,
+    PreprocessRequest,
+    PreprocessResult,
+)
 
 __all__ = [
     "ErrorDetail",
     "ErrorEnvelope",
     "HealthResponse",
     "ServiceInfo",
+    "PreprocessBatchRequest",
+    "PreprocessBatchResponse",
+    "PreprocessOptions",
+    "PreprocessRequest",
+    "PreprocessResult",
 ]

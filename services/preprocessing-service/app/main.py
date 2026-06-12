@@ -1,7 +1,5 @@
-"""API Gateway — single entry point for the IR system.
-
-Phase 0: only meta endpoints (/health, /). Routing to internal services is added
-in later phases as those services come online.
+"""Preprocessing service — normalization, tokenization, stopwords, stemming,
+lemmatization. The same logic is applied to documents and queries.
 """
 
 from __future__ import annotations
@@ -11,6 +9,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.adapters.nltk_resources import build_preprocessor
+from app.api.routes import router
 from app.config import settings
 from shared.contracts import HealthResponse, ServiceInfo
 from shared.ir_common.errors import install_error_handlers
@@ -21,19 +21,23 @@ logger = logging.getLogger(settings.service_name)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("%s v%s started", settings.service_name, settings.version)
+    # Build the preprocessor once at startup (loads NLTK corpora into memory).
+    logger.info("Loading NLTK resources...")
+    app.state.preprocessor = build_preprocessor()
+    logger.info("%s v%s ready", settings.service_name, settings.version)
     yield
     logger.info("%s shutting down", settings.service_name)
 
 
 app = FastAPI(
-    title="IR Project — API Gateway",
+    title="IR Project — Preprocessing Service",
     version=settings.version,
-    description="Single entry point for the IR system. Routes requests to internal services.",
+    description="Normalizes documents and queries (same pipeline for both).",
     lifespan=lifespan,
 )
 
 install_error_handlers(app)
+app.include_router(router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["meta"])
@@ -46,5 +50,5 @@ def info() -> ServiceInfo:
     return ServiceInfo(
         service=settings.service_name,
         version=settings.version,
-        description="API Gateway — single entry point for the IR system.",
+        description="Preprocessing service — normalization for docs and queries.",
     )
