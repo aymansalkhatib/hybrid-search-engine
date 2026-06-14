@@ -443,10 +443,11 @@ pre.json { font-family: var(--mono); font-size: 12px; line-height: 1.55; backgro
 .model-card:disabled .mc-name, .model-card:disabled .mc-sub { color: var(--faint); }
 .model-card:disabled .mc-flag { background: var(--warn-soft); color: var(--warn); }
 
-/* breathing room between the query controls and the result/error box */
+/* breathing room between the query controls and the result/error box.
+   The button is inline-flex, so its margin-bottom can't push the block below it —
+   the gap must live on the result box itself (margin-top). */
 #repQuery { margin-bottom: 12px; }
-#repEncode { margin-bottom: 16px; }
-#repEncodeOut { margin-top: 2px; }
+#repEncodeOut { margin-top: 18px; }
 
 /* query term weights (the algorithm, visualized) */
 .enc-meta { font-family: var(--mono); font-size: 11.5px; color: var(--muted); margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }

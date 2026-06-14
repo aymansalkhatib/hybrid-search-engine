@@ -540,15 +540,20 @@ function applyRepControls(s) {
 
 async function loadRepresentation() {
   const model = state.repModel;
+  // Stop any poller from the previous dataset/model up front, so switching focus
+  // never leaves a stale progress bar from another dataset's build on screen.
+  resetRepProgress();
   $("#repModelBadge").textContent = model;
   const grid = $("#repStats");
   grid.innerHTML = `<div class="loading" style="grid-column:1/-1"><span class="spinner"></span> loading representation status…</div>`;
-  const r = await api("representation", "status", { query: { dataset: state.dataset, model } });
-  if (!r.ok) { resetRepProgress(); grid.innerHTML = `<div class="result-empty" style="grid-column:1/-1">Representation service unreachable. (${esc(errMsg(r))})</div>`; return; }
+  const reqDataset = state.dataset;
+  const r = await api("representation", "status", { query: { dataset: reqDataset, model } });
+  // The user may have switched focus again while this was in flight — drop a stale response.
+  if (reqDataset !== state.dataset || model !== state.repModel) return;
+  if (!r.ok) { grid.innerHTML = `<div class="result-empty" style="grid-column:1/-1">Representation service unreachable. (${esc(errMsg(r))})</div>`; return; }
   const d = r.data;
-  // Self-heal: only show the progress UI when a build is actually in flight.
+  // Only show the progress UI when a build is actually in flight for THIS focus.
   if (d.active_job) pollRepresentationJob(d.active_job.job_id);
-  else resetRepProgress();
   if (!d.built) {
     grid.innerHTML = `<div class="result-empty" style="grid-column:1/-1">No <b>${esc(model)}</b> model for <b>${esc(state.dataset)}</b> yet. Set params and click <b>Build representation</b>. (Ingest the dataset first.)</div>`;
     return;
