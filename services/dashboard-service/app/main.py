@@ -18,6 +18,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
 
 from app.api.routes import router
 from app.config import settings
@@ -29,6 +30,18 @@ logging.basicConfig(level=settings.log_level.upper())
 logger = logging.getLogger(settings.service_name)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """Serve the SPA with ``Cache-Control: no-cache`` so the browser revalidates on
+    every load. The frontend is a bind-mounted, live-edited folder (see compose) —
+    without this, browsers serve a stale CSS/JS after an edit and the UI looks broken.
+    """
+
+    async def get_response(self, path: str, scope) -> Response:
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
 
 
 @asynccontextmanager
@@ -59,4 +72,4 @@ def health() -> HealthResponse:
 
 
 # Serve the SPA. Mounted LAST so /api/* and /healthz take precedence over static.
-app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+app.mount("/", NoCacheStaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
