@@ -52,6 +52,27 @@ services:
       - ir-net
     restart: unless-stopped
 
+  representation-service:
+    build:
+      context: .
+      dockerfile: services/representation-service/Dockerfile
+    image: ir-project/representation-service
+    container_name: ir-representation
+    env_file:
+      - path: .env
+        required: true
+    ports:
+      - "${REPRESENTATION_PORT:-8003}:8003"
+    # Heavy artifacts (TF-IDF matrix + fitted model) persist on the host volume.
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - preprocessing-service
+      - doc-store-service   # the representation is fitted from the docs in the store
+    networks:
+      - ir-net
+    restart: unless-stopped
+
   doc-store-db:
     image: mongo:7
     container_name: ir-doc-store-db
@@ -127,6 +148,7 @@ services:
       - api-gateway
       - preprocessing-service
       - indexing-service
+      - representation-service
       - doc-store-service
     networks:
       - ir-net

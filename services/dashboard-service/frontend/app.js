@@ -12,6 +12,8 @@ const state = {
   browse: { offset: 0, limit: 10 },
   polling: {},         // datasetId -> intervalId (job pollers)
   indexOptions: null,  // the focused dataset's index preprocessing options (for Normalize)
+  repModel: "tfidf",   // representation model in focus
+  repPolling: null,    // representation build job poller
 };
 
 /* ---------- tiny helpers ---------- */
@@ -135,6 +137,7 @@ function renderOverview() {
   setStep("download", d?.download?.downloaded);
   setStep("ingest", (d?.ingest?.ingested_count || 0) > 0);
   setStep("index", d?.index?.built);
+  refreshRepresentStep();  // async — lights the "Represent" step if a model is built
 
   // ---- architecture ----
   renderArch();
@@ -507,6 +510,132 @@ async function lookupDoc() {
 }
 
 /* ============================================================
+   REPRESENTATIONS  (build · track · inspect the algorithm)
+   ============================================================ */
+function repPreprocessOptions() {
+  const opts = {};
+  $$("[data-rpp]").forEach((el) => {
+    opts[el.dataset.rpp] = el.type === "checkbox" ? el.checked : (Number(el.value) || 1);
+  });
+  return opts;
+}
+function repParams() {
+  return {
+    min_df: Number($("#repMinDf").value) || 1,
+    max_df: Number($("#repMaxDf").value) || 1.0,
+    sublinear_tf: $("#repSublinear").checked,
+  };
+}
+function applyRepControls(s) {
+  if (s.params) {
+    $("#repMinDf").value = s.params.min_df;
+    $("#repMaxDf").value = s.params.max_df;
+    $("#repSublinear").checked = !!s.params.sublinear_tf;
+  }
+  if (s.options) $$("[data-rpp]").forEach((el) => {
+    const k = el.dataset.rpp;
+    if (k in s.options) { if (el.type === "checkbox") el.checked = !!s.options[k]; else el.value = s.options[k]; }
+  });
+}
+
+async function loadRepresentation() {
+  const model = state.repModel;
+  $("#repModelBadge").textContent = model;
+  const grid = $("#repStats");
+  grid.innerHTML = `<div class="loading" style="grid-column:1/-1"><span class="spinner"></span> loading representation status…</div>`;
+  const r = await api("representation", "status", { query: { dataset: state.dataset, model } });
+  if (!r.ok) { grid.innerHTML = `<div class="result-empty" style="grid-column:1/-1">Representation service unreachable. (${esc(errMsg(r))})</div>`; return; }
+  const d = r.data;
+  if (d.active_job) pollRepresentationJob(d.active_job.job_id);
+  if (!d.built) {
+    grid.innerHTML = `<div class="result-empty" style="grid-column:1/-1">No <b>${esc(model)}</b> model for <b>${esc(state.dataset)}</b> yet. Set params and click <b>Build representation</b>. (Ingest the dataset first.)</div>`;
+    return;
+  }
+  const s = d.stats;
+  applyRepControls(s);
+  const cards = [
+    ["Documents", fmt(s.num_docs), "matrix rows"],
+    ["Vocabulary", fmt(s.vocab_size), "terms (columns)"],
+    ["Non-zeros", fmt(s.nnz), "weights stored"],
+    ["Density", (s.density * 100).toFixed(4) + "%", "sparsity"],
+    ["min_df / max_df", `${s.params.min_df} / ${s.params.max_df}`, s.params.sublinear_tf ? "sublinear tf" : "raw tf"],
+    ["Built at", (s.built_at || "").replace("T", " ").slice(0, 19), s.cached ? "cached" : "fresh"],
+  ];
+  grid.innerHTML = cards.map((c) => `
+    <div class="stat"><div class="s-label">${c[0]}</div><div class="s-val">${c[1]}</div><div class="s-sub">${esc(c[2])}</div></div>`).join("");
+}
+
+async function buildRepresentation() {
+  const model = state.repModel;
+  const payload = { dataset: state.dataset, model, force: $("#repForce").checked, options: repPreprocessOptions(), params: repParams() };
+  const r = await api("representation", "build", { method: "POST", json: payload });
+  if (!r.ok) { toast(`build failed: ${errMsg(r)}`, "err", 6000); return; }
+  const job = r.data;
+  if (job.state === "skipped") { toast(`${model}: already built — enable “Force (rebuild)” to redo`, "info", 5000); loadRepresentation(); return; }
+  toast(`${state.dataset}: building ${model} (full corpus)`, "info");
+  pollRepresentationJob(job.job_id);
+}
+
+function pollRepresentationJob(jobId) {
+  if (state.repPolling) clearInterval(state.repPolling);
+  const prog = $("#repProg"), bar = $("#repBar"), lbl = $("#repProgLbl");
+  prog.hidden = false; lbl.hidden = false; $("#repBuild").disabled = true;
+  state.repPolling = setInterval(async () => {
+    const r = await api("representation", `jobs/${jobId}`);
+    if (!r.ok) return;
+    const j = r.data;
+    const det = j.percent != null && j.percent > 0;
+    prog.classList.toggle("indet", !det);
+    if (det) bar.style.width = `${j.percent}%`;
+    const counts = j.total ? `(${fmt(j.processed)}/${fmt(j.total)})` : `(${fmt(j.processed)})`;
+    lbl.querySelector(".msg").textContent = `${j.message || j.state} ${counts}`;
+    lbl.querySelector(".pct").innerHTML = det ? `${j.percent}%` : `<span class="spinner"></span>`;
+    if (["succeeded", "failed", "skipped"].includes(j.state)) {
+      clearInterval(state.repPolling); state.repPolling = null;
+      $("#repBuild").disabled = false;
+      setTimeout(() => { prog.hidden = true; lbl.hidden = true; }, 1500);
+      toast(`${state.dataset}: ${state.repModel} ${j.state}${j.error ? " — " + j.error : ""}`, j.state === "failed" ? "err" : "ok", 6000);
+      loadRepresentation();
+      refreshRepresentStep();
+    }
+  }, 1000);
+}
+
+async function deleteRepresentation() {
+  const model = state.repModel;
+  if (!confirm(`Delete the ${model} representation for:\n\n${state.dataset}\n\n(the fitted model + matrix artifact). Rebuildable any time. Continue?`)) return;
+  const r = await api("representation", `representation?dataset=${encodeURIComponent(state.dataset)}&model=${encodeURIComponent(model)}`, { method: "DELETE" });
+  if (r.ok) toast(`${model} ${r.data.deleted ? "deleted" : "— none on disk"}`, "ok"); else toast(errMsg(r), "err", 5000);
+  loadRepresentation();
+  refreshRepresentStep();
+}
+
+async function inspectEncode() {
+  const text = $("#repQuery").value.trim();
+  const out = $("#repEncodeOut");
+  if (!text) { out.className = "result-empty"; out.textContent = "Enter a query."; return; }
+  out.className = "loading"; out.innerHTML = `<span class="spinner"></span> encoding…`;
+  const r = await api("representation", "encode", { method: "POST", json: { dataset: state.dataset, model: state.repModel, texts: [text], top_terms: 30 } });
+  if (!r.ok) { out.className = "result-empty"; out.textContent = `Error: ${errMsg(r)} (build the model first?)`; return; }
+  const v = r.data.vectors[0];
+  out.className = "";
+  if (!v || !v.terms.length) { out.innerHTML = `<p class="hint">No terms survived normalization, or none are in the vocabulary.</p>`; return; }
+  const max = v.terms[0].weight || 1;
+  out.innerHTML = `
+    <div class="enc-meta">${fmt(v.nnz)} non-zero terms · vector dim ${fmt(r.data.dim)}</div>
+    <div class="tws">${v.terms.map((t) => `
+      <div class="tw"><span class="tw-term">${esc(t.term)}</span>
+        <span class="tw-track"><i style="width:${Math.max(2, (t.weight / max) * 100)}%"></i></span>
+        <span class="tw-w">${t.weight.toFixed(4)}</span></div>`).join("")}</div>`;
+}
+
+async function refreshRepresentStep() {
+  if (!state.dataset) return;
+  const r = await api("representation", "status", { query: { dataset: state.dataset, model: "tfidf" } });
+  setStep("represent", r.ok && r.data.built);
+}
+
+/* ============================================================
    SERVICES
    ============================================================ */
 function renderServicesSkeleton() {
@@ -560,6 +689,7 @@ function wireNav() {
 function onViewEnter(view) {
   if (view === "datasets") renderDatasets();
   if (view === "index") loadIndexStats();
+  if (view === "representation") loadRepresentation();
   if (view === "docstore") browseDocs(true);
   if (view === "services") renderServices();
   if (view === "overview") renderOverview();
@@ -591,6 +721,20 @@ function wireActions() {
   $("#ixTerm").addEventListener("keydown", (e) => e.key === "Enter" && lookupTerm());
   $("#ixDocLookup").addEventListener("click", lookupDoc);
   $("#ixDocId").addEventListener("keydown", (e) => e.key === "Enter" && lookupDoc());
+
+  // representations
+  $("#repReload").addEventListener("click", loadRepresentation);
+  $("#repBuild").addEventListener("click", buildRepresentation);
+  $("#repDelete").addEventListener("click", deleteRepresentation);
+  $("#repEncode").addEventListener("click", inspectEncode);
+  $("#repModels").addEventListener("click", (e) => {
+    const b = e.target.closest(".model-tab");
+    if (!b || b.disabled) return;
+    $$("#repModels .model-tab").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    state.repModel = b.dataset.model;
+    loadRepresentation();
+  });
 
   // global dataset focus
   $("#globalDataset").addEventListener("change", (e) => {
