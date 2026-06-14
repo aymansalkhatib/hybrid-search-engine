@@ -44,6 +44,9 @@ class CatalogIngest(BaseModel):
 class CatalogIndex(BaseModel):
     built: bool = False
     num_docs: Optional[int] = None
+    # The preprocessing options the index was actually built with, so the UI can
+    # reflect them (and normalize query terms the same way) instead of guessing.
+    options: Optional[dict] = None
 
 
 class CatalogEntry(BaseModel):
@@ -132,7 +135,11 @@ def catalog(request: Request) -> CatalogResponse:
                     ingested_count=ds.get("ingested_count", 0),
                     fully_ingested=ds.get("fully_ingested"),
                 ),
-                index=CatalogIndex(built=ix.get("built", False), num_docs=stats.get("num_docs")),
+                index=CatalogIndex(
+                    built=ix.get("built", False),
+                    num_docs=stats.get("num_docs"),
+                    options=stats.get("options"),
+                ),
                 active_jobs=active,
             )
         )
@@ -173,7 +180,19 @@ def proxy_download(request: Request, body: dict = Body(...)) -> JSONResponse:
 
 @app.post("/datasets/ingest", tags=["catalog"])
 def proxy_ingest(request: Request, body: dict = Body(...)) -> JSONResponse:
-    """Start ingesting raw docs into Mongo (offline). Body: `{dataset, limit?, force?}`."""
+    """Start ingesting ALL raw docs into Mongo (offline). Body: `{dataset, force?}`.
+
+    A forced re-ingest **replaces** the corpus, which makes any existing index stale
+    (it was built from the previous docs). So we clear that index first (best-effort)
+    to keep ingest and index consistent — otherwise an old index lingers and shows up
+    after the re-ingest. A down indexing service won't block the ingest.
+    """
+    dataset = body.get("dataset")
+    if dataset and body.get("force"):
+        try:
+            request.app.state.indexing.request("DELETE", "/index", params={"dataset": dataset})
+        except httpx.HTTPError:
+            pass  # best-effort — don't block the ingest if indexing is unreachable
     return _proxy(lambda: request.app.state.doc_store.post("/dataset/prepare", json=body))
 
 
@@ -192,13 +211,43 @@ def proxy_delete(
     dataset: str = Query(..., description="Dataset id from the catalog"),
     files: bool = Query(True),
     docs: bool = Query(True),
+    index: bool = Query(True, description="Also remove the built index (artifact + cache)"),
 ) -> JSONResponse:
-    """Independently remove a dataset's local data (corpus files and/or Mongo docs)."""
-    return _proxy(
-        lambda: request.app.state.doc_store.request(
+    """Remove a dataset's local data: corpus files, Mongo docs, and the built index.
+
+    The doc-store owns files/docs; the indexing service owns the index. Index removal
+    is best-effort — a down indexing service won't fail the docs/files delete — and the
+    merged result adds ``index_deleted`` (``null`` if the indexing service was unreachable).
+    """
+    doc_store = request.app.state.doc_store
+    indexing = request.app.state.indexing
+
+    try:
+        ds_resp = doc_store.request(
             "DELETE", "/dataset", params={"dataset": dataset, "files": files, "docs": docs}
         )
-    )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail=f"downstream service unavailable: {exc}") from exc
+
+    try:
+        body = ds_resp.json()
+    except ValueError:
+        body = {"error": {"code": "bad_gateway", "message": ds_resp.text}}
+    if ds_resp.status_code >= 400:
+        return JSONResponse(status_code=ds_resp.status_code, content=body)
+
+    index_deleted = None  # null ⇒ indexing service unreachable / not attempted
+    if index:
+        try:
+            ix_resp = request.app.state.indexing.request(
+                "DELETE", "/index", params={"dataset": dataset}
+            )
+            index_deleted = ix_resp.json().get("index_deleted") if ix_resp.status_code < 400 else False
+        except (httpx.HTTPError, ValueError):
+            index_deleted = None
+
+    body["index_deleted"] = index_deleted
+    return JSONResponse(status_code=ds_resp.status_code, content=body)
 
 
 @app.get("/jobs/{service}/{job_id}", tags=["catalog"])

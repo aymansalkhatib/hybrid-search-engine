@@ -20,6 +20,7 @@ from shared.contracts import (
     BuildIndexRequest,
     BuiltIndexes,
     DocInfo,
+    IndexDeleteResult,
     IndexStats,
     IndexStatusResponse,
     JobStatus,
@@ -106,11 +107,11 @@ def build(req: BuildIndexRequest, request: Request) -> JobStatus:
     """Start a background build of the inverted index for a dataset.
 
     The corpus is read from the **doc-store** (MongoDB), so the dataset must be
-    **ingested** first (pipeline: download → ingest → build). Whole corpus by default,
-    or a positional range via ``start``/``stop`` over the stored ``seq`` order
-    (``limit`` is shorthand for ``stop``). **409** if not ingested; **503** if the
-    doc-store or preprocessing-service is down. Idempotent: a cached index with the
-    same options ends the job as ``skipped`` unless ``force``. Concurrent build → **409**.
+    **ingested** first (pipeline: download → ingest → build). The whole corpus is
+    indexed (optionally a positional range via ``start``/``stop`` over the stored
+    ``seq`` order). **409** if not ingested; **503** if the doc-store or
+    preprocessing-service is down. Idempotent: a cached index with the same options
+    ends the job as ``skipped`` unless ``force``. Concurrent build → **409**.
     """
     dataset_id = _resolve_or_400(req.dataset)
     state = request.app.state
@@ -263,3 +264,21 @@ def doc_info(
 def built(request: Request) -> BuiltIndexes:
     """List dataset ids that currently have a persisted index artifact on disk."""
     return BuiltIndexes(datasets=request.app.state.store.list_datasets(INDEX_VERSION))
+
+
+@router.delete("/index", response_model=IndexDeleteResult)
+def delete_index(
+    request: Request,
+    dataset: str = Query(..., description="Dataset id from the catalog"),
+) -> IndexDeleteResult:
+    """Remove a dataset's built index — the artifact on disk **and** the in-memory
+    cache — so a dataset delete also clears its index. **409** if a build is in flight."""
+    dataset_id = _resolve_or_400(dataset)
+    if request.app.state.jobs.active_for("build", dataset_id) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"a build is in progress for '{dataset_id}'; wait for it to finish",
+        )
+    removed = request.app.state.store.delete(dataset_id, INDEX_VERSION)
+    was_cached = request.app.state.indexes.pop(dataset_id, None) is not None
+    return IndexDeleteResult(dataset_id=dataset_id, index_deleted=removed, was_cached=was_cached)

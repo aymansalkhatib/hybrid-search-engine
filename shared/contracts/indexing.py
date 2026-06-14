@@ -18,12 +18,12 @@ from shared.contracts.preprocessing import PreprocessOptions
 
 
 class BuildIndexRequest(BaseModel):
-    """Build the index over the whole corpus, or a positional range of it.
+    """Build the index over the **whole corpus** (the index always covers every
+    ingested doc), optionally restricted to a positional range via ``start``/``stop``.
 
-    Range selection (``start``/``stop``) indexes only docs ``[start:stop)`` of the
-    dataset's native, stable order — handled by lazy slicing so a huge corpus never
-    overloads memory. ``build all`` = leave both unset. ``limit`` alone is shorthand
-    for ``stop = (start or 0) + limit`` (kept for quick smoke builds).
+    The preprocessing ``options`` are part of the request: the corpus is tokenized
+    with exactly these settings, and queries must later use the same ones to stay
+    comparable. ``build all`` = leave ``start``/``stop`` unset.
     """
 
     dataset: str = Field(description="Dataset id from the configured catalog (DATASETS)")
@@ -34,9 +34,6 @@ class BuildIndexRequest(BaseModel):
     stop: Optional[int] = Field(
         default=None, ge=1, description="Range stop (exclusive) over the corpus order"
     )
-    limit: Optional[int] = Field(
-        default=None, ge=1, description="Shorthand cap: stop = (start or 0) + limit"
-    )
     force: bool = Field(default=False, description="Rebuild even if a cached index exists")
 
     @model_validator(mode="after")
@@ -46,12 +43,8 @@ class BuildIndexRequest(BaseModel):
         return self
 
     def effective_stop(self) -> Optional[int]:
-        """Resolve ``stop`` taking the ``limit`` shorthand into account."""
-        if self.stop is not None:
-            return self.stop
-        if self.limit is not None:
-            return (self.start or 0) + self.limit
-        return None
+        """The exclusive range stop (``None`` ⇒ index to the end of the corpus)."""
+        return self.stop
 
 
 class IndexStats(BaseModel):
@@ -105,3 +98,11 @@ class IndexStatusResponse(BaseModel):
     built: bool                           # a persisted index exists
     stats: Optional[IndexStats] = None    # summary of the built index (if any)
     active_job: Optional[JobRef] = None   # in-flight build (with live progress), if any
+
+
+class IndexDeleteResult(BaseModel):
+    """Result of removing a dataset's built index (artifact + in-memory cache)."""
+
+    dataset_id: str
+    index_deleted: bool     # True if a persisted artifact was removed
+    was_cached: bool        # True if an in-memory copy was evicted

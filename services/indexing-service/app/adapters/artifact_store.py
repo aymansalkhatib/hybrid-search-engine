@@ -42,6 +42,24 @@ class ArtifactStore:
         logger.info("saved index artifact: %s", path)
         return path
 
+    def delete(self, dataset_id: str, version: str) -> bool:
+        """Remove the persisted index artifact for a dataset. True if one was removed.
+
+        Cleans up the temp file too, in case a build crashed mid-write. Deleting an
+        index is independent of the corpus/docs — callers wire it into a dataset
+        delete so removing a dataset also clears its built index from the cache.
+        """
+        path = self.path_for(dataset_id, version)
+        removed = False
+        if path.exists():
+            path.unlink()
+            removed = True
+            logger.info("deleted index artifact: %s", path)
+        tmp = path.with_suffix(".pkl.tmp")
+        if tmp.exists():
+            tmp.unlink()
+        return removed
+
     def load(self, dataset_id: str, version: str) -> InvertedIndex | None:
         path = self.path_for(dataset_id, version)
         if not path.exists():

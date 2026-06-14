@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IR Console · Verification Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="app.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%94%8E%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <!-- ambient background glows -->
+  <div class="bg-orbs" aria-hidden="true">
+    <span class="orb orb-1"></span>
+    <span class="orb orb-2"></span>
+    <span class="orb orb-3"></span>
+  </div>
+
+  <!-- ░░ TOP BAR ░░ -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">IR</div>
+      <div class="brand-text">
+        <strong>IR&nbsp;Console</strong>
+        <span>Verification&nbsp;Dashboard</span>
+      </div>
+    </div>
+
+    <div class="topbar-mid">
+      <div class="pipeline-mini" id="pipelineMini" title="Offline pipeline">
+        <span class="pm-step" data-step="download">Download</span>
+        <span class="pm-arrow">→</span>
+        <span class="pm-step" data-step="ingest">Ingest</span>
+        <span class="pm-arrow">→</span>
+        <span class="pm-step" data-step="index">Index</span>
+        <span class="pm-arrow">→</span>
+        <span class="pm-step pm-future" data-step="query">Query</span>
+      </div>
+    </div>
+
+    <div class="topbar-actions">
+      <div class="gw-pill" id="gwPill" title="API Gateway status">
+        <span class="dot"></span><span class="gw-label">Gateway</span>
+      </div>
+      <button class="btn btn-ghost" id="refreshBtn" title="Refresh health & catalog">
+        <svg viewBox="0 0 24 24" class="ico"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5"/></svg>
+        <span>Refresh</span>
+      </button>
+      <span class="clock" id="clock">--:--:--</span>
+    </div>
+  </header>
+
+  <div class="shell">
+    <!-- ░░ SIDEBAR ░░ -->
+    <aside class="sidebar">
+      <nav class="nav" id="nav">
+        <button class="nav-item active" data-view="overview">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M3 13h8V3H3zM13 21h8V3h-8zM3 21h8v-6H3z"/></svg>
+          <span>Overview</span>
+        </button>
+        <button class="nav-item" data-view="datasets">
+          <svg viewBox="0 0 24 24" class="ico"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></svg>
+          <span>Datasets</span>
+        </button>
+        <button class="nav-item" data-view="preprocess">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M4 7V5h16M4 12h10M4 17h7M16 12l5 5m0-5l-5 5"/></svg>
+          <span>Preprocess</span>
+        </button>
+        <button class="nav-item" data-view="docstore">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M4 4h16v16H4zM4 9h16M9 4v16"/></svg>
+          <span>Doc Store</span>
+        </button>
+        <button class="nav-item" data-view="index">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M3 6h18M3 12h18M3 18h18M7 6v12"/></svg>
+          <span>Index Explorer</span>
+        </button>
+        <button class="nav-item" data-view="services">
+          <svg viewBox="0 0 24 24" class="ico"><rect x="3" y="4" width="18" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/><circle cx="7" cy="7" r="0.5"/><circle cx="7" cy="17" r="0.5"/></svg>
+          <span>Services</span>
+        </button>
+      </nav>
+
+      <div class="side-foot">
+        <div class="side-card">
+          <span class="sc-k">Dataset focus</span>
+          <select id="globalDataset" class="select"></select>
+        </div>
+        <p class="side-note">
+          Dev/QA tool — reaches every service to verify it in isolation.
+          Not the graded product UI.
+        </p>
+      </div>
+    </aside>
+
+    <!-- ░░ MAIN ░░ -->
+    <main class="main" id="main">
+
+      <!-- ===== OVERVIEW ===== -->
+      <section class="view active" data-view="overview">
+        <div class="view-head">
+          <div>
+            <h1>System Overview</h1>
+            <p class="sub">Live health of the SOA — every capability is its own container.</p>
+          </div>
+        </div>
+
+        <div class="kpi-row" id="kpiRow"></div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Architecture &amp; data flow</h2>
+            <span class="legend">
+              <i class="lg lg-up"></i>up <i class="lg lg-down"></i>down
+              <i class="lg lg-planned"></i>planned
+            </span>
+          </div>
+          <div class="arch" id="arch"></div>
+        </div>
+      </section>
+
+      <!-- ===== DATASETS ===== -->
+      <section class="view" data-view="datasets">
+        <div class="view-head">
+          <div>
+            <h1>Datasets</h1>
+            <p class="sub">The offline pipeline per dataset: download → ingest → build index.</p>
+          </div>
+          <button class="btn btn-ghost" id="datasetsRefresh">
+            <svg viewBox="0 0 24 24" class="ico"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5"/></svg> Reload
+          </button>
+        </div>
+        <div class="cards" id="datasetCards"></div>
+      </section>
+
+      <!-- ===== PREPROCESS ===== -->
+      <section class="view" data-view="preprocess">
+        <div class="view-head">
+          <div>
+            <h1>Preprocessing Playground</h1>
+            <p class="sub">The same normalization applied to documents and queries.</p>
+          </div>
+        </div>
+        <div class="split">
+          <div class="panel">
+            <div class="panel-head"><h2>Input</h2></div>
+            <textarea id="ppText" class="textarea" rows="6" placeholder="Type any text…">The Quick Brown Foxes are running quickly over 42 lazy dogs!!</textarea>
+            <div class="opts">
+              <label class="switch"><input type="checkbox" id="ppLower" checked><span></span>lowercase</label>
+              <label class="switch"><input type="checkbox" id="ppStop" checked><span></span>remove stopwords</label>
+              <label class="switch"><input type="checkbox" id="ppLemma" checked><span></span>lemmatize</label>
+              <label class="switch"><input type="checkbox" id="ppStem"><span></span>stem</label>
+              <label class="num">min length
+                <input type="number" id="ppMin" class="input-num" value="2" min="1" max="10">
+              </label>
+            </div>
+            <button class="btn btn-primary" id="ppRun">
+              <svg viewBox="0 0 24 24" class="ico"><path d="M5 3l14 9-14 9z"/></svg> Process
+            </button>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Result</h2>
+              <span class="badge" id="ppCount" hidden></span>
+            </div>
+            <div id="ppOut" class="result-empty">Run the preprocessor to see tokens here.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== DOC STORE ===== -->
+      <section class="view" data-view="docstore">
+        <div class="view-head">
+          <div>
+            <h1>Document Store</h1>
+            <p class="sub">Raw original text in MongoDB — the by-ID lookup graders care about.</p>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h2>Fetch original by ID</h2></div>
+          <div class="row">
+            <input id="dsDocId" class="input" placeholder="document id (e.g. 123)">
+            <button class="btn btn-primary" id="dsFetch">Fetch</button>
+          </div>
+          <div id="dsDocOut" class="result-empty">The original document text appears here.</div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Browse stored corpus</h2>
+            <div class="pager">
+              <button class="btn btn-ghost" id="dsPrev">‹ Prev</button>
+              <span id="dsPageInfo" class="page-info">—</span>
+              <button class="btn btn-ghost" id="dsNext">Next ›</button>
+            </div>
+          </div>
+          <div id="dsBrowse" class="result-empty">Pick a dataset and browse the ingested documents.</div>
+        </div>
+      </section>
+
+      <!-- ===== INDEX EXPLORER ===== -->
+      <section class="view" data-view="index">
+        <div class="view-head">
+          <div>
+            <h1>Inverted Index Explorer</h1>
+            <p class="sub">Postings, document frequency and lengths — the BM25/TF-IDF backbone.</p>
+          </div>
+          <button class="btn btn-ghost" id="ixReload">Load stats</button>
+        </div>
+
+        <div class="stat-grid" id="ixStats"></div>
+
+        <div class="split">
+          <div class="panel">
+            <div class="panel-head"><h2>Term lookup</h2></div>
+            <div class="row">
+              <input id="ixTerm" class="input" placeholder="a term (normalized)">
+              <button class="btn btn-ghost" id="ixNormalize" title="Normalize via preprocessing first">Normalize</button>
+              <button class="btn btn-primary" id="ixLookup">Lookup</button>
+            </div>
+            <p class="hint">Terms in the index are preprocessed. <b>Normalize</b> runs the word through the preprocessing-service using <b>this index's exact options</b>, so it matches how the term is stored (load stats first).</p>
+            <div id="ixTermOut" class="result-empty">df / cf and postings show here.</div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h2>Document length</h2></div>
+            <div class="row">
+              <input id="ixDocId" class="input" placeholder="document id">
+              <button class="btn btn-primary" id="ixDocLookup">Lookup</button>
+            </div>
+            <div id="ixDocOut" class="result-empty">Token count (post-preprocessing) shows here.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== SERVICES ===== -->
+      <section class="view" data-view="services">
+        <div class="view-head">
+          <div>
+            <h1>Services</h1>
+            <p class="sub">Every container, its health, and a direct line to its API docs.</p>
+          </div>
+        </div>
+        <div class="svc-grid" id="svcGrid"></div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- toasts -->
+  <div class="toasts" id="toasts"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -59,9 +59,6 @@ class DownloadDatasetRequest(BaseModel):
 
 class PrepareDatasetRequest(BaseModel):
     dataset: str = Field(description="Dataset id from the configured catalog (DATASETS)")
-    limit: Optional[int] = Field(
-        default=None, ge=1, description="Cap #docs — for quick smoke ingests"
-    )
     force: bool = Field(default=False, description="Re-ingest even if already present")
 
 

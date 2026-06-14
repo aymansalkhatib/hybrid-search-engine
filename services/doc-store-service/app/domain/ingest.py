@@ -21,15 +21,15 @@ def ingest_documents(
     docs: Iterable,                 # yields objects exposing .doc_id and .text
     write_batch: WriteBatch,
     batch_size: int = 5000,
-    limit: int | None = None,
     progress_every: int = 50000,
     on_progress: Callable[[int], None] | None = None,
 ) -> int:
-    """Write the (raw) documents in batches; return how many were ingested.
+    """Write **all** the (raw) documents in batches; return how many were ingested.
 
-    Each doc is stored with its ``seq`` (0-based position in the corpus) so the store
-    has a stable order for browsing and for the indexer to page through. ``on_progress``
-    (if given) is called after each flushed batch with the running total.
+    The full corpus is always migrated to the store. Each doc is stored with its
+    ``seq`` (0-based position in the corpus) so the store has a stable order for
+    browsing and for the indexer to page through. ``on_progress`` (if given) is
+    called after each flushed batch with the running total.
     """
     batch: list[tuple[int, str, str]] = []
     count = 0
@@ -47,8 +47,6 @@ def ingest_documents(
         batch.clear()
 
     for i, doc in enumerate(docs):
-        if limit is not None and i >= limit:
-            break
         batch.append((i, doc.doc_id, doc.text))
         if len(batch) >= batch_size:
             flush()

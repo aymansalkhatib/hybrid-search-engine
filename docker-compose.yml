@@ -104,6 +104,34 @@ services:
       - ir-net
     restart: unless-stopped
 
+  # Verification Console — observability/admin UI (like mongo-express). Serves the
+  # dashboard and reverse-proxies every service so the browser has one origin (no
+  # CORS) and each service can be exercised independently. NOT the graded product UI.
+  dashboard-service:
+    build:
+      context: .
+      dockerfile: services/dashboard-service/Dockerfile
+    image: ir-project/dashboard-service
+    container_name: ir-dashboard
+    env_file:
+      - path: .env
+        required: true
+    ports:
+      - "${DASHBOARD_PORT:-8090}:8090"
+    # Live-edit the dashboard UI without rebuilding the image (served from disk by
+    # StaticFiles) — just refresh the browser. The image still bakes a copy in.
+    volumes:
+      - ./services/dashboard-service/frontend:/app/frontend:ro
+    # Ordering only — the console tolerates any service being down (shows it offline).
+    depends_on:
+      - api-gateway
+      - preprocessing-service
+      - indexing-service
+      - doc-store-service
+    networks:
+      - ir-net
+    restart: unless-stopped
+
 networks:
   ir-net:
     driver: bridge

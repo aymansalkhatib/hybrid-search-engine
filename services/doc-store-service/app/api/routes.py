@@ -15,6 +15,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from app.config import settings
+from app.domain.download_progress import DownloadMonitor
 from app.domain.ingest import ingest_documents
 from shared.contracts import (
     DatasetInfo,
@@ -162,13 +163,23 @@ def download_dataset(req: DownloadDatasetRequest, request: Request) -> JobStatus
         if is_downloaded(home, dataset_id) and not force:
             return {"skipped": True, "dataset_id": dataset_id,
                     "doc_count": manifest_doc_count(home, dataset_id)}
-        # docs_count() is instant (from metadata) — gives us a real % to report.
+        # docs_count() is instant (from metadata) — the materialize phase has a real %.
         progress.update(total=loader.doc_count(), message="downloading corpus archive…")
         count = 0
-        for _ in loader.iter_docs():
-            count += 1
-            if count % PROGRESS_EVERY == 0:
-                progress.update(processed=count, message="materializing corpus")
+        docs = loader.iter_docs()
+        # Phase 1 — archive download/extract. ir_datasets fetches the whole archive
+        # before yielding any doc, so report bytes landing in its temp dir (live MB)
+        # instead of a frozen 0%. The first next() is what triggers the download.
+        with DownloadMonitor(progress, label="downloading archive"):
+            first = next(docs, None)
+        # Phase 2 — materialize. Docs now stream, so switch to a doc-counted percent.
+        if first is not None:
+            count = 1
+            progress.update(processed=count, message="materializing corpus")
+            for _ in docs:
+                count += 1
+                if count % PROGRESS_EVERY == 0:
+                    progress.update(processed=count, message="materializing corpus")
         progress.update(processed=count, message="finalizing")
         write_manifest(home, dataset_id, doc_count=count, complete=True)
         return {"skipped": False, "dataset_id": dataset_id, "doc_count": count}
@@ -195,7 +206,6 @@ def prepare_dataset(req: PrepareDatasetRequest, request: Request) -> JobStatus:
                 "call POST /dataset/download first (the only endpoint that uses the internet)"
             ),
         )
-    limit = req.limit
     force = req.force
     batch_size = settings.ingest_batch_size
 
@@ -204,8 +214,6 @@ def prepare_dataset(req: PrepareDatasetRequest, request: Request) -> JobStatus:
         if existing > 0 and not force:
             return {"skipped": True, "dataset_id": dataset_id, "ingested_count": existing}
         total = manifest_doc_count(home, dataset_id) or DatasetLoader(dataset_id).doc_count()
-        if limit is not None:
-            total = min(total, limit) if total else limit
         progress.update(total=total, message="ingesting raw docs")
         store.ensure_indexes()          # idempotent — also covers a Mongo-not-ready startup
         store.delete_dataset(dataset_id)  # clean slate (idempotent re-ingest)
@@ -214,7 +222,6 @@ def prepare_dataset(req: PrepareDatasetRequest, request: Request) -> JobStatus:
             docs=loader.iter_docs(),
             write_batch=lambda batch: store.write_batch(dataset_id, batch),
             batch_size=batch_size,
-            limit=limit,
             on_progress=lambda n: progress.update(processed=n),
         )
         return {"skipped": False, "dataset_id": dataset_id, "ingested_count": count}
