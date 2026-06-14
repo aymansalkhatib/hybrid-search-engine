@@ -252,9 +252,30 @@
 
         <!-- model picker -->
         <div class="model-tabs" id="repModels">
-          <button class="model-tab active" data-model="tfidf">TF-IDF <span class="mt-sub">VSM · cosine</span></button>
-          <button class="model-tab" data-model="bm25" disabled>BM25 <span class="mt-sub">soon</span></button>
-          <button class="model-tab" data-model="embedding" disabled>Embeddings <span class="mt-sub">soon</span></button>
+          <button class="model-card active" data-model="tfidf">
+            <span class="mc-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l3-4 3 2 4-6"/></svg></span>
+            <span class="mc-body">
+              <span class="mc-name">TF-IDF</span>
+              <span class="mc-sub">Vector Space Model · cosine</span>
+            </span>
+            <span class="mc-flag mc-flag-on">active</span>
+          </button>
+          <button class="model-card" data-model="bm25" disabled>
+            <span class="mc-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span>
+            <span class="mc-body">
+              <span class="mc-name">BM25</span>
+              <span class="mc-sub">Probabilistic · tunable k1 / b</span>
+            </span>
+            <span class="mc-flag">soon</span>
+          </button>
+          <button class="model-card" data-model="embedding" disabled>
+            <span class="mc-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="7" r="2.4"/><circle cx="9" cy="17" r="2.4"/><circle cx="18" cy="17" r="2.4"/><path d="M8.2 7.1l7.4.6M8.1 15.4l7.6-6.4M11.3 17.3h4.4"/></svg></span>
+            <span class="mc-body">
+              <span class="mc-name">Embeddings</span>
+              <span class="mc-sub">Dense vectors · BERT / Word2Vec</span>
+            </span>
+            <span class="mc-flag">soon</span>
+          </button>
         </div>
 
         <div class="stat-grid" id="repStats"></div>

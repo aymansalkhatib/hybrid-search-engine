@@ -623,8 +623,9 @@ async function inspectEncode() {
   const max = v.terms[0].weight || 1;
   out.innerHTML = `
     <div class="enc-meta">${fmt(v.nnz)} non-zero terms · vector dim ${fmt(r.data.dim)}</div>
-    <div class="tws">${v.terms.map((t) => `
-      <div class="tw"><span class="tw-term">${esc(t.term)}</span>
+    <div class="tws">${v.terms.map((t, i) => `
+      <div class="tw"><span class="tw-rank">${i + 1}</span>
+        <span class="tw-term">${esc(t.term)}</span>
         <span class="tw-track"><i style="width:${Math.max(2, (t.weight / max) * 100)}%"></i></span>
         <span class="tw-w">${t.weight.toFixed(4)}</span></div>`).join("")}</div>`;
 }
@@ -728,9 +729,9 @@ function wireActions() {
   $("#repDelete").addEventListener("click", deleteRepresentation);
   $("#repEncode").addEventListener("click", inspectEncode);
   $("#repModels").addEventListener("click", (e) => {
-    const b = e.target.closest(".model-tab");
+    const b = e.target.closest(".model-card");
     if (!b || b.disabled) return;
-    $$("#repModels .model-tab").forEach((x) => x.classList.remove("active"));
+    $$("#repModels .model-card").forEach((x) => x.classList.remove("active"));
     b.classList.add("active");
     state.repModel = b.dataset.model;
     loadRepresentation();
