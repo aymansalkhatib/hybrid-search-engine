@@ -1,8 +1,8 @@
 """Dataset-agnostic loader built on top of `ir_datasets`.
 
 This is the *single* place in the codebase that knows about concrete datasets.
-Everything else depends only on the uniform interface below, so switching a
-dataset is just changing `DATASET_A` / `DATASET_B` in `.env` — never a code change.
+Everything else depends only on the uniform interface below, so switching datasets
+is just editing the `DATASETS` list in `.env` — never a code change.
 
 Example
 -------
@@ -40,7 +40,13 @@ class DatasetLoader:
         self._ds = ir_datasets.load(dataset_id)
 
     def iter_docs(self) -> Iterator[Doc]:
-        """Yield documents as `Doc(doc_id, text)`."""
+        """Yield documents as `Doc(doc_id, text)` in the dataset's native order.
+
+        Used by the **download** (materialize the corpus locally) and **ingest**
+        (migrate raw docs to MongoDB) steps. Range selection happens later, at the
+        doc-store level (by ``seq``), so the indexer pages a stored range from Mongo
+        rather than re-reading ir_datasets.
+        """
         for d in self._ds.docs_iter():
             yield Doc(doc_id=d.doc_id, text=_doc_text(d))
 
@@ -65,6 +71,21 @@ class DatasetLoader:
 
     def has_qrels(self) -> bool:
         return self._ds.has_qrels()
+
+    def metadata(self) -> dict:
+        """ir-datasets' shipped metadata (doc/query/qrel counts) for this dataset.
+
+        Network-free: read from the package's bundled metadata, so it works as a
+        **preview before any download**. Shape (keys optional per dataset)::
+
+            {"docs": {"count": N}, "queries": {"count": M}, "qrels": {"count": K}}
+
+        Returns ``{}`` for datasets that ship no metadata.
+        """
+        try:
+            return self._ds.metadata() or {}
+        except Exception:  # pragma: no cover - dataset without a metadata provider
+            return {}
 
 
 def _doc_text(doc) -> str:

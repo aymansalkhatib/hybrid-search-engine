@@ -31,6 +31,79 @@ services:
       - ir-net
     restart: unless-stopped
 
+  indexing-service:
+    build:
+      context: .
+      dockerfile: services/indexing-service/Dockerfile
+    image: ir-project/indexing-service
+    container_name: ir-indexing
+    env_file:
+      - path: .env
+        required: true
+    ports:
+      - "${INDEXING_PORT:-8002}:8002"
+    # Heavy artifacts (inverted index) persist on the host volume.
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - preprocessing-service
+      - doc-store-service   # the index is built from the docs stored in the doc-store
+    networks:
+      - ir-net
+    restart: unless-stopped
+
+  doc-store-db:
+    image: mongo:7
+    container_name: ir-doc-store-db
+    environment:
+      - MONGO_INITDB_DATABASE=${MONGO_DB:-ir_project}
+    # MongoDB engine files under ./data/mongo so ALL long-term data lives in the
+    # project folder (bind mount, per project preference). Note: if Mongo fails to
+    # start on a Windows host FS (WiredTiger needs POSIX locking), fall back to a
+    # named volume — the raw docs are re-ingestable via /dataset/prepare anyway.
+    volumes:
+      - ./data/mongo:/data/db
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    networks:
+      - ir-net
+    restart: unless-stopped
+
+  doc-store-service:
+    build:
+      context: .
+      dockerfile: services/doc-store-service/Dockerfile
+    image: ir-project/doc-store-service
+    container_name: ir-doc-store
+    env_file:
+      - path: .env
+        required: true
+    ports:
+      - "${DOC_STORE_PORT:-8007}:8007"
+    # Reads the shared ir-datasets cache (./data) as the raw-text source for ingest.
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - doc-store-db
+    networks:
+      - ir-net
+    restart: unless-stopped
+
+  mongo-express:
+    image: mongo-express:latest
+    container_name: ir-mongo-express
+    ports:
+      - "${MONGO_EXPRESS_PORT:-8081}:8081"
+    environment:
+      ME_CONFIG_MONGODB_SERVER: doc-store-db
+      ME_CONFIG_MONGODB_PORT: 27017
+      ME_CONFIG_BASICAUTH: "false"
+    depends_on:
+      - doc-store-db
+    networks:
+      - ir-net
+    restart: unless-stopped
+
 networks:
   ir-net:
     driver: bridge

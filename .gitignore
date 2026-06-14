@@ -19,7 +19,10 @@ env/
 !.env.example
 
 # ---- Data & build artifacts (large, never commit) ----
-data/
+# Keep the folder + its README so the structure travels with the repo;
+# ignore the (large) downloaded datasets and built artifacts inside it.
+/data/*
+!/data/README.md
 reports/*.csv
 reports/*.json
 *.faiss
