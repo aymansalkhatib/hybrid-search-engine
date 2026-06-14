@@ -544,9 +544,11 @@ async function loadRepresentation() {
   const grid = $("#repStats");
   grid.innerHTML = `<div class="loading" style="grid-column:1/-1"><span class="spinner"></span> loading representation status…</div>`;
   const r = await api("representation", "status", { query: { dataset: state.dataset, model } });
-  if (!r.ok) { grid.innerHTML = `<div class="result-empty" style="grid-column:1/-1">Representation service unreachable. (${esc(errMsg(r))})</div>`; return; }
+  if (!r.ok) { resetRepProgress(); grid.innerHTML = `<div class="result-empty" style="grid-column:1/-1">Representation service unreachable. (${esc(errMsg(r))})</div>`; return; }
   const d = r.data;
+  // Self-heal: only show the progress UI when a build is actually in flight.
   if (d.active_job) pollRepresentationJob(d.active_job.job_id);
+  else resetRepProgress();
   if (!d.built) {
     grid.innerHTML = `<div class="result-empty" style="grid-column:1/-1">No <b>${esc(model)}</b> model for <b>${esc(state.dataset)}</b> yet. Set params and click <b>Build representation</b>. (Ingest the dataset first.)</div>`;
     return;
@@ -576,13 +578,33 @@ async function buildRepresentation() {
   pollRepresentationJob(job.job_id);
 }
 
+// Stop any poller and return the build controls to their idle state.
+function resetRepProgress() {
+  if (state.repPolling) { clearInterval(state.repPolling); state.repPolling = null; }
+  const prog = $("#repProg"), lbl = $("#repProgLbl"), btn = $("#repBuild");
+  if (prog) prog.hidden = true;
+  if (lbl) lbl.hidden = true;
+  if (btn) btn.disabled = false;
+}
+
 function pollRepresentationJob(jobId) {
-  if (state.repPolling) clearInterval(state.repPolling);
+  resetRepProgress();  // never stack pollers
   const prog = $("#repProg"), bar = $("#repBar"), lbl = $("#repProgLbl");
   prog.hidden = false; lbl.hidden = false; $("#repBuild").disabled = true;
+  let fails = 0;
   state.repPolling = setInterval(async () => {
     const r = await api("representation", `jobs/${jobId}`);
-    if (!r.ok) return;
+    if (!r.ok) {
+      // 404 ⇒ the job is gone (service restarted / evicted); other errors ⇒ a few
+      // retries before giving up. Either way, never spin forever.
+      if (r.status === 404 || ++fails >= 5) {
+        resetRepProgress();
+        toast("Lost track of the build — reloading status", "err", 4000);
+        loadRepresentation();
+      }
+      return;
+    }
+    fails = 0;
     const j = r.data;
     const det = j.percent != null && j.percent > 0;
     prog.classList.toggle("indet", !det);
@@ -591,9 +613,7 @@ function pollRepresentationJob(jobId) {
     lbl.querySelector(".msg").textContent = `${j.message || j.state} ${counts}`;
     lbl.querySelector(".pct").innerHTML = det ? `${j.percent}%` : `<span class="spinner"></span>`;
     if (["succeeded", "failed", "skipped"].includes(j.state)) {
-      clearInterval(state.repPolling); state.repPolling = null;
-      $("#repBuild").disabled = false;
-      setTimeout(() => { prog.hidden = true; lbl.hidden = true; }, 1500);
+      resetRepProgress();
       toast(`${state.dataset}: ${state.repModel} ${j.state}${j.error ? " — " + j.error : ""}`, j.state === "failed" ? "err" : "ok", 6000);
       loadRepresentation();
       refreshRepresentStep();
