@@ -53,6 +53,10 @@
 }
 
 * { box-sizing: border-box; }
+/* Make the `hidden` attribute always win: some components (e.g. .dprogress-label)
+   set `display: flex`, which would otherwise override the UA `[hidden]{display:none}`
+   and leave "hidden" elements visible (a stuck "starting…" label, etc.). */
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0;
