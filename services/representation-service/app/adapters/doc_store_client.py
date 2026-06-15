@@ -13,7 +13,7 @@ from typing import Iterator
 
 import httpx
 
-from shared.contracts import DocListResponse
+from shared.contracts import DocListResponse, DocsRequest, DocsResponse
 
 
 @dataclass(frozen=True)
@@ -69,6 +69,21 @@ class DocStoreClient:
             seq += len(page.docs)
             if len(page.docs) < page_limit:  # short page ⇒ reached the end
                 break
+
+    def fetch_originals(self, dataset_id: str, doc_ids: list[str]) -> dict[str, str]:
+        """Return ``{doc_id: original_text}`` for the given ids (query-time display).
+
+        This is the **by-id** read of the *original* documents the assignment grades —
+        the search results show the raw text, fetched from Mongo via the doc-store.
+        Missing ids are simply absent from the result.
+        """
+        if not doc_ids:
+            return {}
+        req = DocsRequest(dataset=dataset_id, doc_ids=doc_ids)
+        resp = self._client.post("/docs", json=req.model_dump())
+        resp.raise_for_status()
+        body = DocsResponse(**resp.json())
+        return {d.doc_id: d.text for d in body.docs}
 
     def close(self) -> None:
         self._client.close()

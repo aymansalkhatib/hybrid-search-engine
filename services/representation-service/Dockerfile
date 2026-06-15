@@ -3,10 +3,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies first for better layer caching (scikit-learn/scipy ship wheels).
-# Generous timeout/retries: the scientific wheels are large and slow to fetch.
+# Install dependencies first for better layer caching. A BuildKit cache mount keeps
+# already-downloaded wheels across build attempts, so a flaky/slow network can resume
+# instead of re-fetching the large scientific wheels (scikit-learn, scipy, gensim).
 COPY services/representation-service/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir --timeout 180 --retries 8 -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --timeout 180 --retries 8 -r requirements.txt
 
 # Shared contracts + service code.
 COPY shared/ ./shared/

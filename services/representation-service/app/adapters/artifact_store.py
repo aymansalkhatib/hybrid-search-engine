@@ -54,8 +54,16 @@ class RepresentationStore:
         path = self.path_for(dataset_id, model, version)
         if not path.exists():
             return None
-        with open(path, "rb") as fh:
-            return pickle.load(fh)
+        try:
+            with open(path, "rb") as fh:
+                return pickle.load(fh)
+        except Exception as exc:  # noqa: BLE001
+            # A corrupt or version-incompatible artifact (e.g. built on a different
+            # numpy/scipy) shouldn't crash status reads — treat it as "not built" so
+            # the user can simply rebuild it.
+            logger.warning("could not load %s artifact (%s); treating as not built: %s",
+                           model, path.name, exc)
+            return None
 
     def delete(self, dataset_id: str, model: str, version: str) -> bool:
         """Remove the persisted artifact for a (dataset, model). True if one existed.

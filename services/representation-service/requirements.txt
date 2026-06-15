@@ -3,6 +3,13 @@ uvicorn[standard]==0.34.0
 pydantic==2.10.4
 pydantic-settings==2.7.1
 httpx==0.28.1
-numpy==2.2.1
-scipy==1.15.1
+
+# Lexical models (TF-IDF, BM25). numpy is pinned <2 for gensim compatibility.
+numpy==1.26.4
+scipy==1.13.1
 scikit-learn==1.6.1
+
+# Dense embeddings — Word2Vec (trained offline on the corpus). Light, CPU-only,
+# PyPI-only (no large torch download). BERT/sentence-transformers can be swapped in
+# later as another registered model where a faster network / GPU is available.
+gensim==4.3.3

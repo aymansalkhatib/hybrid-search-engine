@@ -1,29 +1,38 @@
 """Pluggable representation strategies — the seam that keeps models swappable.
 
 A representation is a framework-independent object that (1) is **built offline**
-from the preprocessed corpus and (2) can **encode** a query into the same space at
-runtime. TF-IDF is the only concrete model today; BM25 and dense embeddings slot in
-by subclassing :class:`BaseRepresentation` and decorating with :func:`register` —
+from the corpus and (2) at query time can **search** (rank docs) and **score** a
+given set of docs. TF-IDF, BM25 and dense Embeddings each subclass
+:class:`BaseRepresentation` and register themselves with :func:`register`; the
+hybrid layer (serial / parallel + fusion) composes these via the same interface —
 no caller changes, exactly the "pluggable strategies" the constitution grades.
 
-Raw document text is **never** stored here (it lives in the doc-store, read by ID
+Raw document text is **never** stored here (it lives in the doc-store, read by id
 at query time). A representation only keeps ``doc_ids`` aligned row-for-row with its
-matrix, so a retriever can map a matrix row back to an external document id.
+matrix, so a hit's matrix row maps back to an external document id.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Iterable, Type
+from typing import Callable, Iterable, Type
 
 # Bumped only on a breaking change to the on-disk artifact layout.
 REPRESENTATION_VERSION = "1"
+
+# Normalize one raw text with a given PreprocessOptions dict → a normalized string.
+Normalizer = Callable[[str, dict], str]
+
+# A ranked result: (external doc_id, score), higher score = more relevant.
+Scored = tuple[str, float]
 
 
 class ModelKind:
     """Known representation model names (the ``model`` field across contracts)."""
 
     TFIDF = "tfidf"
+    BM25 = "bm25"
+    EMBEDDING = "embedding"
 
 
 _REGISTRY: dict[str, Type["BaseRepresentation"]] = {}
@@ -46,7 +55,8 @@ def available_models() -> list[str]:
 class BaseRepresentation(ABC):
     """Common interface + introspection shared by every representation model."""
 
-    model: str = ""  # overridden by each concrete model (its registry key)
+    model: str = ""               # overridden by each concrete model (its registry key)
+    requires_preprocessing = True  # lexical models normalize the query; embeddings use raw text
 
     def __init__(
         self,
@@ -54,7 +64,7 @@ class BaseRepresentation(ABC):
         dataset_id: str,
         doc_ids: list[str],
         options: dict,   # PreprocessOptions.model_dump() used at build time
-        params: dict,    # model params (e.g. TfidfParams.model_dump())
+        params: dict,    # model-specific params (model_dump of the params model)
         built_at: str,
         version: str = REPRESENTATION_VERSION,
     ) -> None:
@@ -72,7 +82,7 @@ class BaseRepresentation(ABC):
         cls,
         *,
         dataset_id: str,
-        corpus: Iterable[str],   # yields one normalized (space-joined tokens) doc per document
+        corpus: Iterable[str],   # normalized docs (lexical) or raw docs (embedding), in order
         doc_ids: list[str],      # filled, in order, as ``corpus`` is consumed
         options: dict,
         params: dict,
@@ -81,28 +91,30 @@ class BaseRepresentation(ABC):
 
     # ---- query (online) ----
     @abstractmethod
-    def encode(self, normalized_texts: list[str]):
-        """Vectorize already-normalized query texts → a scipy CSR matrix in the
-        document space (one row per text)."""
+    def search(self, *, raw_query: str, top_k: int, normalize: Normalizer, **params) -> list[Scored]:
+        """Return up to ``top_k`` ``(doc_id, score)`` for the query, sorted desc.
+
+        ``normalize(text, options)`` is provided so lexical models can normalize the
+        query with **their own** build-time ``options``; embedding models ignore it.
+        """
 
     @abstractmethod
-    def feature_names(self):
-        """Array mapping a matrix column index → its term (for introspection)."""
+    def score_docs(
+        self, *, doc_ids: list[str], raw_query: str, normalize: Normalizer, **params
+    ) -> dict[str, float]:
+        """Score a specific set of ``doc_ids`` for the query (used by serial re-ranking)."""
 
-    # ---- introspection ----
+    # ---- introspection (lexical models override; sensible defaults otherwise) ----
+    def encode(self, normalized_texts: list[str]):
+        raise NotImplementedError(f"{self.model} does not support /encode")
+
+    def feature_names(self):
+        raise NotImplementedError(f"{self.model} has no term vocabulary")
+
     @property
     def num_docs(self) -> int:
         return len(self.doc_ids)
 
-    @property
-    @abstractmethod
-    def vocab_size(self) -> int: ...
-
-    @property
-    @abstractmethod
-    def nnz(self) -> int: ...
-
-    @property
-    def density(self) -> float:
-        denom = self.num_docs * self.vocab_size
-        return (self.nnz / denom) if denom else 0.0
+    def stats_extra(self) -> dict:
+        """Model-specific stat fields (e.g. vocab_size/nnz/density, or dim, or avgdl)."""
+        return {}

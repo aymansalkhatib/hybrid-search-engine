@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="app.css?v=6" />
+  <link rel="stylesheet" href="app.css?v=8" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%94%8E%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -81,6 +81,10 @@
         <button class="nav-item" data-view="representation">
           <svg viewBox="0 0 24 24" class="ico"><path d="M3 3v18h18M7 14l3-3 3 3 5-6"/></svg>
           <span>Representations</span>
+        </button>
+        <button class="nav-item" data-view="search">
+          <svg viewBox="0 0 24 24" class="ico"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <span>Search</span>
         </button>
         <button class="nav-item" data-view="services">
           <svg viewBox="0 0 24 24" class="ico"><rect x="3" y="4" width="18" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/><circle cx="7" cy="7" r="0.5"/><circle cx="7" cy="17" r="0.5"/></svg>
@@ -258,23 +262,20 @@
               <span class="mc-name">TF-IDF</span>
               <span class="mc-sub">Vector Space Model · cosine</span>
             </span>
-            <span class="mc-flag mc-flag-on">active</span>
           </button>
-          <button class="model-card" data-model="bm25" disabled>
+          <button class="model-card" data-model="bm25">
             <span class="mc-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></span>
             <span class="mc-body">
               <span class="mc-name">BM25</span>
               <span class="mc-sub">Probabilistic · tunable k1 / b</span>
             </span>
-            <span class="mc-flag">soon</span>
           </button>
-          <button class="model-card" data-model="embedding" disabled>
+          <button class="model-card" data-model="embedding">
             <span class="mc-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="7" r="2.4"/><circle cx="9" cy="17" r="2.4"/><circle cx="18" cy="17" r="2.4"/><path d="M8.2 7.1l7.4.6M8.1 15.4l7.6-6.4M11.3 17.3h4.4"/></svg></span>
             <span class="mc-body">
               <span class="mc-name">Embeddings</span>
-              <span class="mc-sub">Dense vectors · BERT / Word2Vec</span>
+              <span class="mc-sub">Dense · Word2Vec (gensim)</span>
             </span>
-            <span class="mc-flag">soon</span>
           </button>
         </div>
 
@@ -284,15 +285,16 @@
           <!-- BUILD (control) -->
           <div class="panel">
             <div class="panel-head"><h2>Build <span class="badge" id="repModelBadge">tfidf</span></h2></div>
-            <p class="hint">Fitted <b>offline</b> from the ingested corpus (read from the doc-store, tokenized by the preprocessing-service). Built once, loaded ready — nothing is trained at query time.</p>
+            <p class="hint">Fitted <b>offline</b> from the ingested corpus. Built once, loaded ready — nothing is trained at query time.</p>
+            <p class="hint" id="repBuildHint" hidden></p>
 
-            <div class="opt-row">
-              <span class="opt-label">TF-IDF params</span>
+            <div class="opt-row" id="repParamsRow">
+              <span class="opt-label">Build params</span>
               <label class="opt-field">min_df <input type="number" class="input-num" id="repMinDf" value="1" min="1" max="1000"></label>
-              <label class="opt-field">max_df <input type="number" class="input-num" id="repMaxDf" value="1.0" min="0.1" max="1" step="0.05"></label>
-              <label class="switch sm"><input type="checkbox" id="repSublinear" checked><span></span>sublinear tf</label>
+              <span class="rep-tfidf-only"><label class="opt-field">max_df <input type="number" class="input-num" id="repMaxDf" value="1.0" min="0.1" max="1" step="0.05"></label></span>
+              <span class="rep-tfidf-only"><label class="switch sm"><input type="checkbox" id="repSublinear" checked><span></span>sublinear tf</label></span>
             </div>
-            <div class="opt-row">
+            <div class="opt-row" id="repPpRow">
               <span class="opt-label">Preprocessing</span>
               <label class="switch sm"><input type="checkbox" data-rpp="lowercase" checked><span></span>lowercase</label>
               <label class="switch sm"><input type="checkbox" data-rpp="remove_stopwords" checked><span></span>stopwords</label>
@@ -330,6 +332,74 @@
         </div>
       </section>
 
+      <!-- ===== SEARCH ===== -->
+      <section class="view" data-view="search">
+        <div class="view-head">
+          <div>
+            <h1>Search</h1>
+            <p class="sub">Query the built representations — single model, or hybrid (serial re-rank / parallel fusion).</p>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="search-bar">
+            <input id="seQuery" class="input" placeholder="Type a query…" value="how do I learn python quickly">
+            <button class="btn btn-primary" id="seRun">
+              <svg viewBox="0 0 24 24" class="ico"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg> Search
+            </button>
+          </div>
+
+          <div class="opt-row">
+            <span class="opt-label">Model</span>
+            <div class="seg" id="seModel">
+              <button class="seg-btn active" data-m="bm25">BM25</button>
+              <button class="seg-btn" data-m="tfidf">TF-IDF</button>
+              <button class="seg-btn" data-m="embedding">Embedding</button>
+              <button class="seg-btn" data-m="hybrid">Hybrid</button>
+            </div>
+            <label class="opt-field">top_k <input id="seTopk" type="number" class="input-num" value="10" min="1" max="100"></label>
+          </div>
+
+          <div class="opt-row" id="seBm25Row">
+            <span class="opt-label">BM25 params</span>
+            <label class="slider">k1 <input id="seK1" type="range" min="0" max="3" step="0.1" value="1.5"><b id="seK1v">1.5</b></label>
+            <label class="slider">b <input id="seB" type="range" min="0" max="1" step="0.05" value="0.75"><b id="seBv">0.75</b></label>
+            <span class="opt-note">tune term-saturation (k1) &amp; length-normalization (b) per query</span>
+          </div>
+
+          <div id="seHybrid" hidden>
+            <div class="opt-row">
+              <span class="opt-label">Hybrid</span>
+              <div class="seg" id="seMode">
+                <button class="seg-btn active" data-mode="parallel">Parallel · fusion</button>
+                <button class="seg-btn" data-mode="serial">Serial · re-rank</button>
+              </div>
+            </div>
+            <div class="opt-row" id="seParallel">
+              <span class="opt-label">Components</span>
+              <label class="switch sm"><input type="checkbox" data-comp="bm25" checked><span></span>BM25</label>
+              <label class="switch sm"><input type="checkbox" data-comp="tfidf"><span></span>TF-IDF</label>
+              <label class="switch sm"><input type="checkbox" data-comp="embedding" checked><span></span>Embedding</label>
+              <span class="opt-label">Fusion</span>
+              <div class="seg" id="seFusion">
+                <button class="seg-btn active" data-f="rrf">RRF</button>
+                <button class="seg-btn" data-f="weighted">Weighted</button>
+              </div>
+            </div>
+            <div class="opt-row" id="seSerial" hidden>
+              <span class="opt-label">First → Re-rank</span>
+              <select id="seFirst" class="select sm"><option value="bm25">bm25</option><option value="tfidf">tfidf</option><option value="embedding">embedding</option></select>
+              <span class="arrow">→</span>
+              <select id="seRerank" class="select sm"><option value="embedding">embedding</option><option value="tfidf">tfidf</option><option value="bm25">bm25</option></select>
+              <label class="opt-field">candidates <input id="seCand" type="number" class="input-num" value="100" min="1" max="2000"></label>
+            </div>
+          </div>
+
+          <div id="seMeta" class="enc-meta" hidden></div>
+          <div id="seResults" class="result-empty">Run a search to see ranked documents with their original text.</div>
+        </div>
+      </section>
+
       <!-- ===== SERVICES ===== -->
       <section class="view" data-view="services">
         <div class="view-head">
@@ -347,6 +417,6 @@
   <!-- toasts -->
   <div class="toasts" id="toasts"></div>
 
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>

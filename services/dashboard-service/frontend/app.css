@@ -464,6 +464,33 @@ pre.json { font-family: var(--mono); font-size: 12px; line-height: 1.55; backgro
 .tw-w { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--accent-bright); text-align: right; }
 .tw:hover .tw-term { color: #fff; }
 
+/* ============================================================
+   SEARCH — query bar, segmented controls, sliders, result hits
+   ============================================================ */
+.search-bar { display: flex; gap: 12px; margin-bottom: 18px; }
+.search-bar .input { flex: 1; }
+
+.seg { display: inline-flex; background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 3px; gap: 3px; }
+.seg-btn { font-family: var(--font); font-size: 12.5px; font-weight: 600; color: var(--text-2); background: transparent; border: none; border-radius: 8px; padding: 7px 13px; cursor: pointer; transition: .14s; }
+.seg-btn:hover { color: var(--text); }
+.seg-btn.active { background: var(--accent-soft); color: var(--accent-bright); box-shadow: inset 0 0 0 1px var(--accent-line); }
+
+.slider { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-2); font-family: var(--mono); }
+.slider input[type="range"] { accent-color: var(--accent); cursor: pointer; }
+.slider b { color: var(--accent-bright); min-width: 32px; text-align: right; }
+.select.sm { padding: 6px 10px; font-size: 12.5px; }
+.opt-row .arrow { color: var(--muted); }
+
+.hits { display: flex; flex-direction: column; gap: 10px; }
+.hit { display: flex; gap: 14px; padding: 14px 16px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; transition: .15s; }
+.hit:hover { border-color: var(--border-strong); }
+.hit-rank { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--accent-bright); width: 26px; flex-shrink: 0; text-align: center; }
+.hit-body { flex: 1; min-width: 0; }
+.hit-top { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px; align-items: baseline; }
+.hit-id { font-size: 12px; color: var(--muted); }
+.hit-score { font-family: var(--mono); font-size: 12px; color: var(--ok); font-weight: 600; }
+.hit-text { font-size: 13px; color: var(--text-2); line-height: 1.55; word-break: break-word; }
+
 @media (max-width: 1100px) {
   .kpi-row, .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .split { grid-template-columns: 1fr; }

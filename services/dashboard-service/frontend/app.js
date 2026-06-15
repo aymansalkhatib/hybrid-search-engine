@@ -14,6 +14,9 @@ const state = {
   indexOptions: null,  // the focused dataset's index preprocessing options (for Normalize)
   repModel: "tfidf",   // representation model in focus
   repPolling: null,    // representation build job poller
+  seModel: "bm25",     // search model
+  seMode: "parallel",  // hybrid mode
+  seFusion: "rrf",     // parallel fusion method
 };
 
 /* ---------- tiny helpers ---------- */
@@ -528,9 +531,9 @@ function repParams() {
 }
 function applyRepControls(s) {
   if (s.params) {
-    $("#repMinDf").value = s.params.min_df;
-    $("#repMaxDf").value = s.params.max_df;
-    $("#repSublinear").checked = !!s.params.sublinear_tf;
+    if (s.params.min_df != null) $("#repMinDf").value = s.params.min_df;
+    if (s.params.max_df != null) $("#repMaxDf").value = s.params.max_df;
+    if (s.params.sublinear_tf != null) $("#repSublinear").checked = !!s.params.sublinear_tf;
   }
   if (s.options) $$("[data-rpp]").forEach((el) => {
     const k = el.dataset.rpp;
@@ -544,6 +547,7 @@ async function loadRepresentation() {
   // never leaves a stale progress bar from another dataset's build on screen.
   resetRepProgress();
   $("#repModelBadge").textContent = model;
+  repSyncControls();
   const grid = $("#repStats");
   grid.innerHTML = `<div class="loading" style="grid-column:1/-1"><span class="spinner"></span> loading representation status…</div>`;
   const reqDataset = state.dataset;
@@ -560,21 +564,58 @@ async function loadRepresentation() {
   }
   const s = d.stats;
   applyRepControls(s);
-  const cards = [
-    ["Documents", fmt(s.num_docs), "matrix rows"],
-    ["Vocabulary", fmt(s.vocab_size), "terms (columns)"],
-    ["Non-zeros", fmt(s.nnz), "weights stored"],
-    ["Density", (s.density * 100).toFixed(4) + "%", "sparsity"],
-    ["min_df / max_df", `${s.params.min_df} / ${s.params.max_df}`, s.params.sublinear_tf ? "sublinear tf" : "raw tf"],
-    ["Built at", (s.built_at || "").replace("T", " ").slice(0, 19), s.cached ? "cached" : "fresh"],
-  ];
+  const built = (s.built_at || "").replace("T", " ").slice(0, 19);
+  const fresh = s.cached ? "cached" : "fresh";
+  let cards;
+  if (model === "embedding") {
+    cards = [
+      ["Documents", fmt(s.num_docs), "doc vectors"],
+      ["Dimensions", fmt(s.dim), "Word2Vec size"],
+      ["Vocabulary", fmt(s.vocab_size), "words learned"],
+      ["Built at", built, fresh],
+    ];
+  } else if (model === "bm25") {
+    cards = [
+      ["Documents", fmt(s.num_docs), "corpus size"],
+      ["Vocabulary", fmt(s.vocab_size), "terms"],
+      ["avgdl", (s.avgdl ?? 0).toFixed(2), "avg doc length"],
+      ["min_df", fmt(s.params?.min_df ?? 1), "term pruning"],
+      ["Built at", built, fresh],
+    ];
+  } else {
+    cards = [
+      ["Documents", fmt(s.num_docs), "matrix rows"],
+      ["Vocabulary", fmt(s.vocab_size), "terms (columns)"],
+      ["Non-zeros", fmt(s.nnz), "weights stored"],
+      ["Density", ((s.density ?? 0) * 100).toFixed(4) + "%", "sparsity"],
+      ["min_df / max_df", `${s.params?.min_df} / ${s.params?.max_df}`, s.params?.sublinear_tf ? "sublinear tf" : "raw tf"],
+      ["Built at", built, fresh],
+    ];
+  }
   grid.innerHTML = cards.map((c) => `
     <div class="stat"><div class="s-label">${c[0]}</div><div class="s-val">${c[1]}</div><div class="s-sub">${esc(c[2])}</div></div>`).join("");
 }
 
+function repSyncControls() {
+  const m = state.repModel;
+  // All three models tokenize via preprocessing; only TF-IDF/BM25 expose vocab params.
+  $("#repParamsRow").hidden = m === "embedding";
+  $("#repPpRow").hidden = false;
+  $$(".rep-tfidf-only").forEach((el) => { el.hidden = m !== "tfidf"; });
+  const hints = {
+    bm25: "k1 / b are tuned per query in the Search tab — not at build time. Build only stores corpus statistics.",
+    embedding: "Word2Vec is trained offline on the corpus (skip-gram, 100-dim). A document's vector is the mean of its word vectors; build is a bit slower than the lexical models.",
+  };
+  const hint = $("#repBuildHint");
+  if (hints[m]) { hint.hidden = false; hint.textContent = hints[m]; } else hint.hidden = true;
+}
+
 async function buildRepresentation() {
   const model = state.repModel;
-  const payload = { dataset: state.dataset, model, force: $("#repForce").checked, options: repPreprocessOptions(), params: repParams() };
+  const payload = { dataset: state.dataset, model, force: $("#repForce").checked, options: repPreprocessOptions() };
+  if (model === "tfidf") payload.params = repParams();
+  else if (model === "bm25") payload.bm25 = { min_df: Number($("#repMinDf").value) || 1 };
+  // embedding: server defaults (transformer model name etc.)
   const r = await api("representation", "build", { method: "POST", json: payload });
   if (!r.ok) { toast(`build failed: ${errMsg(r)}`, "err", 6000); return; }
   const job = r.data;
@@ -638,6 +679,11 @@ async function deleteRepresentation() {
 async function inspectEncode() {
   const text = $("#repQuery").value.trim();
   const out = $("#repEncodeOut");
+  if (state.repModel === "embedding") {
+    out.className = "result-empty";
+    out.innerHTML = `Term weights are a <b>lexical</b> view (TF-IDF / BM25). Embeddings are dense vectors — use the <b>Search</b> tab to query them.`;
+    return;
+  }
   if (!text) { out.className = "result-empty"; out.textContent = "Enter a query."; return; }
   out.className = "loading"; out.innerHTML = `<span class="spinner"></span> encoding…`;
   const r = await api("representation", "encode", { method: "POST", json: { dataset: state.dataset, model: state.repModel, texts: [text], top_terms: 30 } });
@@ -659,6 +705,102 @@ async function refreshRepresentStep() {
   if (!state.dataset) return;
   const r = await api("representation", "status", { query: { dataset: state.dataset, model: "tfidf" } });
   setStep("represent", r.ok && r.data.built);
+}
+
+/* ============================================================
+   SEARCH  (single model + hybrid serial/parallel + fusion)
+   ============================================================ */
+function seComponents() {
+  return $$("#seParallel [data-comp]").filter((c) => c.checked).map((c) => c.dataset.comp);
+}
+function seUsesBm25() {
+  if (state.seModel === "bm25") return true;
+  if (state.seModel !== "hybrid") return false;
+  return state.seMode === "parallel"
+    ? seComponents().includes("bm25")
+    : ($("#seFirst").value === "bm25" || $("#seRerank").value === "bm25");
+}
+function seSyncControls() {
+  $("#seHybrid").hidden = state.seModel !== "hybrid";
+  $("#seBm25Row").hidden = !seUsesBm25();
+  if (state.seModel === "hybrid") {
+    $("#seParallel").hidden = state.seMode !== "parallel";
+    $("#seSerial").hidden = state.seMode !== "serial";
+  }
+}
+
+async function runSearch() {
+  const query = $("#seQuery").value.trim();
+  const out = $("#seResults");
+  if (!query) { toast("Enter a query", "err"); return; }
+  const payload = {
+    dataset: state.dataset, model: state.seModel, query, with_text: true,
+    top_k: Number($("#seTopk").value) || 10,
+    k1: Number($("#seK1").value), b: Number($("#seB").value),
+  };
+  if (state.seModel === "hybrid") {
+    if (state.seMode === "parallel") {
+      const comps = seComponents();
+      if (comps.length < 2) { toast("Pick at least 2 components for parallel hybrid", "err", 4000); return; }
+      payload.hybrid = { mode: "parallel", components: comps, fusion: state.seFusion, rrf_k: 60 };
+    } else {
+      const first = $("#seFirst").value, rerank = $("#seRerank").value;
+      if (first === rerank) { toast("Serial needs two different models", "err", 4000); return; }
+      payload.hybrid = { mode: "serial", first, rerank, candidates: Number($("#seCand").value) || 100 };
+    }
+  }
+  out.className = "loading"; out.innerHTML = `<span class="spinner"></span> searching…`;
+  $("#seMeta").hidden = true;
+  const r = await api("representation", "search", { method: "POST", json: payload });
+  if (!r.ok) { out.className = "result-empty"; out.textContent = `Error: ${errMsg(r)} (build the needed model(s) first?)`; return; }
+  renderSearchResults(r.data);
+}
+
+function renderSearchResults(d) {
+  const meta = $("#seMeta");
+  meta.hidden = false;
+  meta.textContent = `${fmt(d.total)} hits · ${d.model}${d.mode ? " · " + d.mode : ""} · ${d.took_ms} ms`;
+  const out = $("#seResults");
+  if (!d.hits.length) { out.className = "result-empty"; out.textContent = "No results — try another query or model."; return; }
+  out.className = "";
+  out.innerHTML = `<div class="hits">${d.hits.map((h) => `
+    <div class="hit">
+      <div class="hit-rank">${h.rank}</div>
+      <div class="hit-body">
+        <div class="hit-top">
+          <span class="hit-id mono">${esc(h.doc_id)}</span>
+          <span class="hit-score">${(h.score ?? 0).toFixed(4)}</span>
+        </div>
+        <div class="hit-text">${esc(trunc(h.text || "(original text unavailable)", 320))}</div>
+      </div>
+    </div>`).join("")}</div>`;
+}
+
+function wireSearch() {
+  $("#seRun").addEventListener("click", runSearch);
+  $("#seQuery").addEventListener("keydown", (e) => e.key === "Enter" && runSearch());
+  // segmented controls
+  $("#seModel").addEventListener("click", (e) => {
+    const b = e.target.closest(".seg-btn"); if (!b) return;
+    $$("#seModel .seg-btn").forEach((x) => x.classList.remove("active")); b.classList.add("active");
+    state.seModel = b.dataset.m; seSyncControls();
+  });
+  $("#seMode").addEventListener("click", (e) => {
+    const b = e.target.closest(".seg-btn"); if (!b) return;
+    $$("#seMode .seg-btn").forEach((x) => x.classList.remove("active")); b.classList.add("active");
+    state.seMode = b.dataset.mode; seSyncControls();
+  });
+  $("#seFusion").addEventListener("click", (e) => {
+    const b = e.target.closest(".seg-btn"); if (!b) return;
+    $$("#seFusion .seg-btn").forEach((x) => x.classList.remove("active")); b.classList.add("active");
+    state.seFusion = b.dataset.f;
+  });
+  // bm25 sliders
+  $("#seK1").addEventListener("input", (e) => { $("#seK1v").textContent = Number(e.target.value).toFixed(1); });
+  $("#seB").addEventListener("input", (e) => { $("#seBv").textContent = Number(e.target.value).toFixed(2); });
+  // re-evaluate whether BM25 params are relevant
+  $("#seParallel").addEventListener("change", seSyncControls);
+  $("#seSerial").addEventListener("change", seSyncControls);
 }
 
 /* ============================================================
@@ -716,6 +858,7 @@ function onViewEnter(view) {
   if (view === "datasets") renderDatasets();
   if (view === "index") loadIndexStats();
   if (view === "representation") loadRepresentation();
+  if (view === "search") seSyncControls();
   if (view === "docstore") browseDocs(true);
   if (view === "services") renderServices();
   if (view === "overview") renderOverview();
@@ -747,6 +890,9 @@ function wireActions() {
   $("#ixTerm").addEventListener("keydown", (e) => e.key === "Enter" && lookupTerm());
   $("#ixDocLookup").addEventListener("click", lookupDoc);
   $("#ixDocId").addEventListener("keydown", (e) => e.key === "Enter" && lookupDoc());
+
+  // search
+  wireSearch();
 
   // representations
   $("#repReload").addEventListener("click", loadRepresentation);
