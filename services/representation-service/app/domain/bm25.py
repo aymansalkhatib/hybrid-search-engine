@@ -92,7 +92,10 @@ class Bm25Representation(BaseRepresentation):
             dl = self.doc_lens[docs]
             denom = tf + k1 * (1.0 - b + b * dl / self.avgdl)
             contrib = (qtf * self.idf[term]) * (tf * (k1 + 1.0)) / denom
-            np.add.at(scores, docs, contrib)
+            # A term's postings hold each doc at most once, so the target indices are
+            # unique — plain fancy-index add is correct here and several times faster
+            # than the unbuffered np.add.at (which only matters when indices repeat).
+            scores[docs] += contrib
         return scores
 
     def search(self, *, raw_query, top_k, normalize, k1: float = 1.5, b: float = 0.75, **_) -> list[Scored]:
