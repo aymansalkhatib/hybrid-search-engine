@@ -3,19 +3,26 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies first for better layer caching. A BuildKit cache mount keeps
-# already-downloaded wheels across build attempts, so a flaky/slow network can resume
-# instead of re-fetching the large scientific wheels (scikit-learn, scipy, gensim).
+# Install deps first for better layer caching. A BuildKit cache mount keeps already
+# downloaded wheels across build attempts, so a flaky/slow network resumes instead of
+# re-fetching. CPU-only torch comes from the PyTorch index in its own step (so
+# sentence-transformers resolves against it without pulling the much larger CUDA build).
 COPY services/representation-service/requirements.txt ./requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --timeout 180 --retries 8 -r requirements.txt
+    pip install --timeout 300 --retries 12 \
+        torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --timeout 300 --retries 12 -r requirements.txt
 
 # Shared contracts + service code.
 COPY shared/ ./shared/
 COPY services/representation-service/app/ ./app/
 
 ENV PYTHONPATH=/app \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    # Cache the downloaded BERT weights on the mounted data volume (one-time download).
+    HF_HOME=/app/data/models \
+    SENTENCE_TRANSFORMERS_HOME=/app/data/models
 
 EXPOSE 8003
 

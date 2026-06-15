@@ -403,7 +403,7 @@ pre.json { font-family: var(--mono); font-size: 12px; line-height: 1.55; backgro
 /* ============================================================
    REPRESENTATIONS — model picker cards + query term weights
    ============================================================ */
-.model-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 20px; }
+.model-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 20px; }
 .model-card {
   position: relative; overflow: hidden;
   display: flex; align-items: center; gap: 14px; text-align: left;

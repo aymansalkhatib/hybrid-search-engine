@@ -35,6 +35,7 @@ from shared.contracts.indexing import (
     TermStats,
 )
 from shared.contracts.representation import (
+    BertBuildParams,
     Bm25BuildParams,
     BuildRepresentationRequest,
     BuiltRepresentation,
@@ -90,6 +91,7 @@ __all__ = [
     "Posting",
     "PostingsResponse",
     "TermStats",
+    "BertBuildParams",
     "Bm25BuildParams",
     "BuildRepresentationRequest",
     "BuiltRepresentation",

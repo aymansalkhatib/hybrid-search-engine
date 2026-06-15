@@ -163,6 +163,7 @@ def _build_params(req: BuildRepresentationRequest) -> dict:
         "tfidf": req.params,
         "bm25": req.bm25,
         "embedding": req.embedding,
+        "bert": req.bert,
     }[req.model].model_dump()
 
 

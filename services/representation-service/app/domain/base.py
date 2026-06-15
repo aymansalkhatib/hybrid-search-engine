@@ -32,7 +32,8 @@ class ModelKind:
 
     TFIDF = "tfidf"
     BM25 = "bm25"
-    EMBEDDING = "embedding"
+    EMBEDDING = "embedding"   # Word2Vec (gensim)
+    BERT = "bert"             # sentence-transformers (dense, contextual)
 
 
 _REGISTRY: dict[str, Type["BaseRepresentation"]] = {}

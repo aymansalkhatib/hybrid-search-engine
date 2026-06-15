@@ -9,7 +9,9 @@ numpy==1.26.4
 scipy==1.13.1
 scikit-learn==1.6.1
 
-# Dense embeddings — Word2Vec (trained offline on the corpus). Light, CPU-only,
-# PyPI-only (no large torch download). BERT/sentence-transformers can be swapped in
-# later as another registered model where a faster network / GPU is available.
+# Dense embeddings:
+#  - Word2Vec (gensim): light, trained offline on the corpus.
+#  - BERT (sentence-transformers): stronger semantic vectors. torch itself is
+#    installed separately in the Dockerfile from the CPU-only PyTorch index.
 gensim==4.3.3
+sentence-transformers==3.3.1

@@ -567,7 +567,14 @@ async function loadRepresentation() {
   const built = (s.built_at || "").replace("T", " ").slice(0, 19);
   const fresh = s.cached ? "cached" : "fresh";
   let cards;
-  if (model === "embedding") {
+  if (model === "bert") {
+    cards = [
+      ["Documents", fmt(s.num_docs), "doc vectors"],
+      ["Dimensions", fmt(s.dim), "BERT size"],
+      ["Model", (s.params?.model_name || "").split("/").pop() || "—", "transformer"],
+      ["Built at", built, fresh],
+    ];
+  } else if (model === "embedding") {
     cards = [
       ["Documents", fmt(s.num_docs), "doc vectors"],
       ["Dimensions", fmt(s.dim), "Word2Vec size"],
@@ -598,13 +605,14 @@ async function loadRepresentation() {
 
 function repSyncControls() {
   const m = state.repModel;
-  // All three models tokenize via preprocessing; only TF-IDF/BM25 expose vocab params.
-  $("#repParamsRow").hidden = m === "embedding";
-  $("#repPpRow").hidden = false;
+  // Vocab params: TF-IDF (+min_df for BM25) only. Preprocessing: all but BERT (it reads raw text).
+  $("#repParamsRow").hidden = (m === "embedding" || m === "bert");
+  $("#repPpRow").hidden = (m === "bert");
   $$(".rep-tfidf-only").forEach((el) => { el.hidden = m !== "tfidf"; });
   const hints = {
     bm25: "k1 / b are tuned per query in the Search tab — not at build time. Build only stores corpus statistics.",
     embedding: "Word2Vec is trained offline on the corpus (skip-gram, 100-dim). A document's vector is the mean of its word vectors; build is a bit slower than the lexical models.",
+    bert: "BERT (sentence-transformers) reads raw text — no preprocessing. The transformer downloads once (~90MB); this is the slowest build (CPU encoding).",
   };
   const hint = $("#repBuildHint");
   if (hints[m]) { hint.hidden = false; hint.textContent = hints[m]; } else hint.hidden = true;
@@ -679,9 +687,9 @@ async function deleteRepresentation() {
 async function inspectEncode() {
   const text = $("#repQuery").value.trim();
   const out = $("#repEncodeOut");
-  if (state.repModel === "embedding") {
+  if (state.repModel === "embedding" || state.repModel === "bert") {
     out.className = "result-empty";
-    out.innerHTML = `Term weights are a <b>lexical</b> view (TF-IDF / BM25). Embeddings are dense vectors — use the <b>Search</b> tab to query them.`;
+    out.innerHTML = `Term weights are a <b>lexical</b> view (TF-IDF / BM25). Dense models (Word2Vec / BERT) have no term weights — use the <b>Search</b> tab to query them.`;
     return;
   }
   if (!text) { out.className = "result-empty"; out.textContent = "Enter a query."; return; }

@@ -57,6 +57,16 @@ class EmbeddingBuildParams(BaseModel):
     sg: int = Field(default=1, ge=0, le=1, description="1 = skip-gram, 0 = CBOW")
 
 
+class BertBuildParams(BaseModel):
+    """BERT (sentence-transformers) build knobs."""
+
+    model_name: str = Field(
+        default="sentence-transformers/all-MiniLM-L6-v2",
+        description="sentence-transformers model id (downloaded once, cached on the volume)",
+    )
+    batch_size: int = Field(default=64, ge=1, le=512, description="Encode batch size")
+
+
 class BuildRepresentationRequest(BaseModel):
     """Build a representation over the **whole corpus** (every ingested doc),
     optionally restricted to a positional range via ``start``/``stop``.
@@ -67,12 +77,13 @@ class BuildRepresentationRequest(BaseModel):
     """
 
     dataset: str = Field(description="Dataset id from the configured catalog (DATASETS)")
-    model: Literal["tfidf", "bm25", "embedding"] = Field(default="tfidf")
+    model: Literal["tfidf", "bm25", "embedding", "bert"] = Field(default="tfidf")
     options: PreprocessOptions = Field(default_factory=PreprocessOptions)
     params: TfidfParams = Field(default_factory=TfidfParams, description="TF-IDF params")
     bm25: Bm25BuildParams = Field(default_factory=Bm25BuildParams, description="BM25 build params")
     embedding: EmbeddingBuildParams = Field(default_factory=EmbeddingBuildParams,
-                                            description="Embedding build params")
+                                            description="Word2Vec build params")
+    bert: BertBuildParams = Field(default_factory=BertBuildParams, description="BERT build params")
     start: Optional[int] = Field(default=None, ge=0, description="Range start (inclusive)")
     stop: Optional[int] = Field(default=None, ge=1, description="Range stop (exclusive)")
     force: bool = Field(default=False, description="Rebuild even if a cached model exists")
@@ -185,8 +196,8 @@ class HybridSpec(BaseModel):
 
     mode: HybridMode = "parallel"
     # parallel
-    components: list[Literal["tfidf", "bm25", "embedding"]] = Field(
-        default_factory=lambda: ["bm25", "embedding"],
+    components: list[Literal["tfidf", "bm25", "embedding", "bert"]] = Field(
+        default_factory=lambda: ["bm25", "bert"],
         description="Models to run and fuse (parallel mode)",
     )
     fusion: FusionMethod = "rrf"
@@ -195,11 +206,11 @@ class HybridSpec(BaseModel):
     )
     rrf_k: int = Field(default=60, ge=1, description="RRF damping constant")
     # serial
-    first: Literal["tfidf", "bm25", "embedding"] = Field(
+    first: Literal["tfidf", "bm25", "embedding", "bert"] = Field(
         default="bm25", description="Fast model that retrieves candidates (serial mode)"
     )
-    rerank: Literal["tfidf", "bm25", "embedding"] = Field(
-        default="embedding", description="Model that re-ranks the candidates (serial mode)"
+    rerank: Literal["tfidf", "bm25", "embedding", "bert"] = Field(
+        default="bert", description="Model that re-ranks the candidates (serial mode)"
     )
     candidates: int = Field(default=100, ge=1, le=2000,
                             description="How many candidates the first stage passes on (serial)")
@@ -219,7 +230,7 @@ class SearchRequest(BaseModel):
     """Run a query and return ranked documents. ``model='hybrid'`` uses ``hybrid``."""
 
     dataset: str
-    model: Literal["tfidf", "bm25", "embedding", "hybrid"] = "bm25"
+    model: Literal["tfidf", "bm25", "embedding", "bert", "hybrid"] = "bm25"
     query: str = Field(min_length=1)
     top_k: int = Field(default=10, ge=1, le=200)
     # BM25 per-query tuning (assignment: must be controllable per query from the UI)
