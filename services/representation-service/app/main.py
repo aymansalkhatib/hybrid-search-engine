@@ -48,12 +48,22 @@ async def lifespan(app: FastAPI):
         if rep is not None:
             app.state.models[(built.dataset_id, built.model)] = rep
             preloaded += 1
+    # Warm each preloaded model's query-time resources (e.g. BERT's transformer encoder),
+    # so the first online query doesn't load a multi-hundred-MB model on the request path
+    # and trip the gateway timeout. Best-effort: a warm-up failure just leaves it lazy.
+    warmed = 0
+    for (ds, model), rep in app.state.models.items():
+        try:
+            rep.warmup()
+            warmed += 1
+        except Exception:
+            logger.warning("warm-up failed for %s/%s — left lazy", ds, model, exc_info=True)
     # Runs builds as background jobs (one active per dataset+model) with live progress.
     app.state.jobs = JobRegistry()
     logger.info(
-        "%s v%s ready (artifacts=%s, models=%s, preloaded=%d)",
+        "%s v%s ready (artifacts=%s, models=%s, preloaded=%d, warmed=%d)",
         settings.service_name, settings.version, settings.artifacts_dir,
-        ",".join(available_models()), preloaded,
+        ",".join(available_models()), preloaded, warmed,
     )
     yield
     app.state.preprocessing.close()

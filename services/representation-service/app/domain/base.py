@@ -119,3 +119,10 @@ class BaseRepresentation(ABC):
     def stats_extra(self) -> dict:
         """Model-specific stat fields (e.g. vocab_size/nnz/density, or dim, or avgdl)."""
         return {}
+
+    def warmup(self) -> None:
+        """Load any lazy query-time resource (e.g. a transformer encoder) into memory now,
+        so the first online query doesn't pay that cost on the request path and trip the
+        gateway timeout. No-op by default; dense transformer models override it. Keeps the
+        online query within budget — §10: models are loaded ready at startup."""
+        return None

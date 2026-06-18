@@ -83,6 +83,13 @@ class BertRepresentation(BaseRepresentation):
                    dim=dim, options=options, params=params,
                    built_at=datetime.now(timezone.utc).isoformat())
 
+    # ---- warm-up (startup) ----
+    def warmup(self) -> None:
+        """Pre-load the sentence-transformer encoder and JIT its forward path with a tiny
+        encode, so the first real query doesn't trigger a multi-hundred-MB load on the
+        request path (which exceeds the gateway timeout on a cold container)."""
+        self._encode_query("warmup")
+
     # ---- query ----
     def _encode_query(self, raw_query: str) -> np.ndarray:
         st = _load_st(self.model_name)
