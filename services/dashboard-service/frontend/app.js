@@ -806,7 +806,7 @@ async function runSearch() {
   }
   out.className = "loading"; out.innerHTML = `<span class="spinner"></span> searching…`;
   $("#seMeta").hidden = true;
-  const r = await api("representation", "search", { method: "POST", json: payload });
+  const r = await api("retrieval", "search", { method: "POST", json: payload });
   if (!r.ok) { out.className = "result-empty"; out.textContent = `Error: ${errMsg(r)} (build the needed model(s) first?)`; return; }
   renderSearchResults(r.data);
 }

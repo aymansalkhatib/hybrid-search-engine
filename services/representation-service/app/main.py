@@ -2,11 +2,12 @@
 
 Offline: ``POST /build`` streams the corpus from the doc-store through the
 preprocessing-service and fits a model (TF-IDF, BM25, Word2Vec or BERT), persisting
-it to the data volume. Online: ``POST /search`` ranks docs with a single model or a
-hybrid (serial re-rank / parallel fusion), and ``POST /encode`` shows how a lexical
-model weighs a query — no fitting at query time. Raw document text
-is owned by the doc-store, not this service; a model only keeps doc ids aligned with
-its matrix.
+it to the data volume. Online scoring primitives: ``POST /rank`` ranks the corpus
+with a single model and ``POST /score`` scores a given set of docs — the
+retrieval-service orchestrates these into a hybrid. ``POST /encode`` shows how a
+lexical model weighs a query — no fitting at query time. Raw
+document text is owned by the doc-store, not this service; a model only keeps doc ids
+aligned with its matrix.
 """
 
 from __future__ import annotations
@@ -53,7 +54,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="IR Project — Representation Service",
     version=settings.version,
-    description="Builds & serves document representations (TF-IDF/VSM, BM25, Word2Vec, BERT) + hybrid search.",
+    description="Builds & serves document representations (TF-IDF/VSM, BM25, Word2Vec, BERT) + per-model scoring.",
     lifespan=lifespan,
 )
 
@@ -71,5 +72,5 @@ def info() -> ServiceInfo:
     return ServiceInfo(
         service=settings.service_name,
         version=settings.version,
-        description="Representation service — build & serve TF-IDF, BM25, Word2Vec, BERT + hybrid search.",
+        description="Representation service — build & serve TF-IDF, BM25, Word2Vec, BERT; rank/score primitives.",
     )

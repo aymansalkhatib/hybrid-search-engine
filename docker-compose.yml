@@ -86,6 +86,28 @@ services:
       - ir-net
     restart: unless-stopped
 
+  retrieval-service:
+    build:
+      context: .
+      dockerfile: services/retrieval-service/Dockerfile
+    image: ir-project/retrieval-service
+    container_name: ir-retrieval
+    env_file:
+      - path: .env
+        required: true
+    # Internal-only: reachable on the compose network at retrieval-service:8004.
+    # Not published to the host — the API Gateway is the single external door (§4).
+    expose:
+      - "8004"
+    # Owns no artifacts (no data volume): it asks the representation-service for
+    # per-model scores and reads original docs by id from the doc-store.
+    depends_on:
+      - representation-service   # does the per-model scoring (/rank, /score)
+      - doc-store-service        # original docs read by id for display
+    networks:
+      - ir-net
+    restart: unless-stopped
+
   doc-store-db:
     image: mongo:7
     container_name: ir-doc-store-db
@@ -166,6 +188,7 @@ services:
       - preprocessing-service
       - indexing-service
       - representation-service
+      - retrieval-service
       - doc-store-service
     networks:
       - ir-net

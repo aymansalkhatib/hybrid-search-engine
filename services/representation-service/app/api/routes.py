@@ -1,17 +1,16 @@
 """HTTP layer (thin) for the representation-service — maps requests to the domain.
 
-* ``POST /build`` — offline build of one model (TF-IDF / BM25 / Embedding) as a
+* ``POST /build`` — offline build of one model (TF-IDF / BM25 / Embedding / BERT) as a
   background job (idempotent; live progress via ``GET /jobs/{id}`` or ``GET /status``).
-* ``POST /search`` — the online query path: rank documents with a single model **or**
-  a **hybrid** (serial re-rank / parallel fusion), and fetch the **original** top-k
-  docs by id from the doc-store for display.
+* ``POST /rank`` — the core scoring primitive: rank the corpus for a query with one
+  model. The **retrieval-service** calls this and orchestrates the hybrid on top.
+* ``POST /score`` — score a specific set of doc ids with one model (serial re-ranking).
 * ``POST /encode`` — inspect how a lexical model weighs a query (TF-IDF / BM25).
 """
 
 from __future__ import annotations
 
 import logging
-import time
 from typing import Iterable, Optional
 
 import httpx
@@ -26,7 +25,6 @@ from app.domain.base import (
     get_model_class,
 )
 from app.domain.builder import build_representation
-from app.domain.hybrid import parallel_search, serial_search
 from shared.contracts import (
     BuildRepresentationRequest,
     BuiltRepresentations,
@@ -35,12 +33,14 @@ from shared.contracts import (
     EncodedVector,
     JobStatus,
     PreprocessOptions,
+    RankRequest,
+    RankResponse,
     RepresentationDeleteResult,
     RepresentationStats,
     RepresentationStatusResponse,
-    SearchHit,
-    SearchRequest,
-    SearchResponse,
+    ScoreRequest,
+    ScoreResponse,
+    ScoredDoc,
     WeightedTerm,
     ref_from_job,
     status_from_job,
@@ -278,65 +278,50 @@ def stats(
     return _stats(_require_model(request, dataset, model), cached=True)
 
 
-# ---- search (the online query path) --------------------------------------
+# ---- scoring primitives (the retrieval-service orchestrates these) -------
 
-@router.post("/search", response_model=SearchResponse)
-def search(req: SearchRequest, request: Request) -> SearchResponse:
-    """Rank documents for a query with a single model or a hybrid, and return the
-    top-k with their **original** text (fetched by id from the doc-store).
+@router.post("/rank", response_model=RankResponse)
+def rank(req: RankRequest, request: Request) -> RankResponse:
+    """Rank the corpus for a query with **one** model — the core scoring primitive.
 
-    Hybrid (``model='hybrid'``): ``serial`` re-ranks one model's candidates with
-    another; ``parallel`` fuses several models' lists (RRF / weighted). BM25's
-    ``k1``/``b`` are taken from the request (per-query tuning). **404** if a needed
-    model isn't built; **503** if preprocessing is down for a lexical model.
+    Returns up to ``top_k`` ``(doc_id, score)`` sorted descending (positive scores
+    only). BM25's ``k1``/``b`` come from the request (per-query tuning); the other
+    models ignore them. The retrieval-service combines several of these calls into a
+    hybrid and fetches the original text. **404** if the model isn't built; **503**
+    if preprocessing is down for a lexical model.
     """
-    dataset_id = _resolve_or_400(req.dataset)
+    rep = _require_model(request, req.dataset, req.model)
     state = request.app.state
+    _require_preprocessing(state, [rep])
     normalize = _make_normalizer(state)
-    knobs = {"k1": req.k1, "b": req.b}  # consumed by BM25; other models ignore them
-    t0 = time.perf_counter()
+    results = rep.search(
+        raw_query=req.query, top_k=req.top_k, normalize=normalize, k1=req.k1, b=req.b
+    )
+    return RankResponse(
+        dataset_id=rep.dataset_id,
+        model=req.model,
+        hits=[ScoredDoc(doc_id=d, score=round(float(s), 6)) for d, s in results],
+    )
 
-    if req.model == "hybrid":
-        spec = req.hybrid
-        names = [spec.first, spec.rerank] if spec.mode == "serial" else list(spec.components)
-        models = {n: _load_required(request, dataset_id, n) for n in dict.fromkeys(names)}
-        _require_preprocessing(state, models.values())
-        if spec.mode == "serial":
-            results = serial_search(
-                first=models[spec.first], rerank=models[spec.rerank],
-                raw_query=req.query, normalize=normalize,
-                candidates=spec.candidates, top_k=req.top_k, **knobs,
-            )
-        else:
-            results = parallel_search(
-                models=models, components=spec.components,
-                raw_query=req.query, normalize=normalize,
-                fusion=spec.fusion, weights=spec.weights, rrf_k=spec.rrf_k,
-                top_k=req.top_k, **knobs,
-            )
-        mode = spec.mode
-    else:
-        _validate_model_or_400(req.model)
-        rep = _load_required(request, dataset_id, req.model)
-        _require_preprocessing(state, [rep])
-        results = rep.search(raw_query=req.query, top_k=req.top_k, normalize=normalize, **knobs)
-        mode = None
 
-    # Show the ORIGINAL document text — read by id from the doc-store (graded path).
-    texts: dict[str, str] = {}
-    if req.with_text and results:
-        try:
-            texts = state.doc_store.fetch_originals(dataset_id, [d for d, _ in results])
-        except httpx.HTTPError:
-            texts = {}  # degrade gracefully: still return ranking if the doc-store blips
+@router.post("/score", response_model=ScoreResponse)
+def score(req: ScoreRequest, request: Request) -> ScoreResponse:
+    """Score a **specific** set of doc ids for a query with one model.
 
-    hits = [
-        SearchHit(rank=i + 1, doc_id=d, score=round(float(s), 6), text=texts.get(d))
-        for i, (d, s) in enumerate(results)
-    ]
-    return SearchResponse(
-        dataset_id=dataset_id, model=req.model, mode=mode, query=req.query,
-        took_ms=round((time.perf_counter() - t0) * 1000, 2), total=len(hits), hits=hits,
+    Used by serial hybrid re-ranking: a second model re-scores the first stage's
+    candidates. Ids the model doesn't know are absent from the result.
+    """
+    rep = _require_model(request, req.dataset, req.model)
+    state = request.app.state
+    _require_preprocessing(state, [rep])
+    normalize = _make_normalizer(state)
+    scores = rep.score_docs(
+        doc_ids=req.doc_ids, raw_query=req.query, normalize=normalize, k1=req.k1, b=req.b
+    )
+    return ScoreResponse(
+        dataset_id=rep.dataset_id,
+        model=req.model,
+        scores={d: round(float(s), 6) for d, s in scores.items()},
     )
 
 
@@ -373,7 +358,7 @@ def encode(req: EncodeRequest, request: Request) -> EncodeResponse:
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"/encode is for lexical models (tfidf, bm25); use /search for '{rep.model}'",
+            detail=f"/encode is for lexical models (tfidf, bm25); use /rank to score '{rep.model}'",
         )
 
     return EncodeResponse(model=rep.model, dim=dim, options=options, vectors=vectors)

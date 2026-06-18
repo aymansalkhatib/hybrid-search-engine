@@ -1,19 +1,20 @@
-"""Contracts for the representation-service (offline build + online query/search).
+"""Contracts for the representation-service (offline build + per-model scoring).
 
 A *representation* turns the corpus into something a retriever can score. The
 assignment (§2) requires four, all hosted here:
 
 * **TF-IDF (VSM)** — sparse weights, cosine similarity.
 * **BM25** — probabilistic ranking with per-query tunable ``k1`` / ``b``.
-* **Embedding** — dense vectors (sentence-transformers / BERT).
-* **Hybrid** — combine the above two ways: **serial** (one model retrieves
-  candidates, another re-ranks) and **parallel** (run several models and merge
-  their ranked lists with a **fusion method**, e.g. RRF).
+* **Embedding (Word2Vec)** — dense distributional vectors.
+* **BERT** — dense contextual vectors (sentence-transformers).
 
 Heavy artifacts are built **offline** and loaded ready at startup (no fitting at
-query time). Raw text lives only in the doc-store and is fetched
-**by id** at query time for display. Datasets/models are referenced by id/name, so
-callers stay dataset- and model-agnostic.
+query time). This service owns the fitted models and exposes the
+**scoring primitives** the retrieval-service orchestrates: ``/rank`` (rank docs with
+one model) and ``/score`` (score a specific set of docs, for serial re-ranking).
+Combining models into a hybrid (serial / parallel + fusion) and showing the original
+text are the **retrieval-service**'s job (see ``shared.contracts.retrieval``).
+Datasets/models are referenced by id/name, so callers stay dataset- and model-agnostic.
 """
 
 from __future__ import annotations
@@ -178,86 +179,56 @@ class EncodeResponse(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
-#  Search — the online query path (single model + hybrid)
+#  Scoring primitives — the per-model ranking the retrieval-service orchestrates
 # --------------------------------------------------------------------------- #
+#
+# These are **internal** service-to-service contracts: the retrieval-service calls
+# them to obtain one model's scores, then applies the retrieval strategy (single /
+# serial / parallel) on top. They operate on a single concrete model (never the
+# "hybrid" pseudo-model) and never fetch original text — that is retrieval's job.
 
-FusionMethod = Literal["rrf", "weighted"]
-HybridMode = Literal["serial", "parallel"]
-
-
-class HybridSpec(BaseModel):
-    """How to combine models for a hybrid search.
-
-    * **serial**: ``first`` retrieves ``candidates`` docs, then ``rerank`` re-scores
-      just those and reorders them.
-    * **parallel**: each model in ``components`` searches independently and the
-      ranked lists are merged by a **fusion method** (RRF or weighted score sum).
-    """
-
-    mode: HybridMode = "parallel"
-    # parallel
-    components: list[Literal["tfidf", "bm25", "embedding", "bert"]] = Field(
-        default_factory=lambda: ["bm25", "bert"],
-        description="Models to run and fuse (parallel mode)",
-    )
-    fusion: FusionMethod = "rrf"
-    weights: Optional[list[float]] = Field(
-        default=None, description="Per-component weights (weighted fusion; defaults to equal)"
-    )
-    rrf_k: int = Field(default=60, ge=1, description="RRF damping constant")
-    # serial
-    first: Literal["tfidf", "bm25", "embedding", "bert"] = Field(
-        default="bm25", description="Fast model that retrieves candidates (serial mode)"
-    )
-    rerank: Literal["tfidf", "bm25", "embedding", "bert"] = Field(
-        default="bert", description="Model that re-ranks the candidates (serial mode)"
-    )
-    candidates: int = Field(default=100, ge=1, le=2000,
-                            description="How many candidates the first stage passes on (serial)")
-
-    @model_validator(mode="after")
-    def _check(self) -> "HybridSpec":
-        if self.mode == "parallel" and len(self.components) < 2:
-            raise ValueError("parallel hybrid needs at least 2 components")
-        if self.weights is not None and len(self.weights) != len(self.components):
-            raise ValueError("weights must match the number of components")
-        if self.mode == "serial" and self.first == self.rerank:
-            raise ValueError("serial hybrid needs two different models (first != rerank)")
-        return self
+ScoringModel = Literal["tfidf", "bm25", "embedding", "bert"]
 
 
-class SearchRequest(BaseModel):
-    """Run a query and return ranked documents. ``model='hybrid'`` uses ``hybrid``."""
+class RankRequest(BaseModel):
+    """Rank the whole corpus for a query with **one** model — the core scoring call."""
 
     dataset: str
-    model: Literal["tfidf", "bm25", "embedding", "bert", "hybrid"] = "bm25"
+    model: ScoringModel = "bm25"
     query: str = Field(min_length=1)
-    top_k: int = Field(default=10, ge=1, le=200)
-    # BM25 per-query tuning (assignment: must be controllable per query from the UI)
+    top_k: int = Field(default=10, ge=1, le=2000)
+    # BM25 per-query tuning (ignored by the other models)
     k1: float = Field(default=1.5, ge=0.0, le=10.0, description="BM25 term-saturation")
     b: float = Field(default=0.75, ge=0.0, le=1.0, description="BM25 length-normalization")
-    hybrid: Optional[HybridSpec] = Field(default=None, description="Required when model='hybrid'")
-    with_text: bool = Field(default=True, description="Fetch the original doc text by id for display")
-
-    @model_validator(mode="after")
-    def _check(self) -> "SearchRequest":
-        if self.model == "hybrid" and self.hybrid is None:
-            self.hybrid = HybridSpec()
-        return self
 
 
-class SearchHit(BaseModel):
-    rank: int
+class ScoredDoc(BaseModel):
     doc_id: str
     score: float
-    text: Optional[str] = None          # original text (when with_text and found in the store)
 
 
-class SearchResponse(BaseModel):
+class RankResponse(BaseModel):
     dataset_id: str
     model: str
-    mode: Optional[str] = None          # hybrid mode, if applicable
-    query: str
-    took_ms: float
-    total: int                          # hits returned
-    hits: list[SearchHit]
+    hits: list[ScoredDoc]               # ranked desc, up to top_k, positive scores only
+
+
+class ScoreRequest(BaseModel):
+    """Score a **specific** set of doc ids for a query with one model.
+
+    Used by serial hybrid re-ranking: the first stage's candidate ids are re-scored
+    by a second model. Ids the model doesn't know are simply absent from the result.
+    """
+
+    dataset: str
+    model: ScoringModel = "bert"
+    query: str = Field(min_length=1)
+    doc_ids: list[str] = Field(min_length=1, description="Candidate doc ids to score")
+    k1: float = Field(default=1.5, ge=0.0, le=10.0, description="BM25 term-saturation")
+    b: float = Field(default=0.75, ge=0.0, le=1.0, description="BM25 length-normalization")
+
+
+class ScoreResponse(BaseModel):
+    dataset_id: str
+    model: str
+    scores: dict[str, float]            # {doc_id: score} for the ids the model knows

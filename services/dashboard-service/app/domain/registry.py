@@ -64,7 +64,7 @@ def build_registry(settings) -> list[ServiceEntry]:
                      "built", "pipeline", s.representation_url, s.representation_port),
         ServiceEntry("retrieval", "Retrieval",
                      "Match & rank · Hybrid Serial/Parallel + Fusion",
-                     "planned", "query", s.retrieval_url, s.retrieval_port),
+                     "built", "query", s.retrieval_url, s.retrieval_port),
         ServiceEntry("query-refinement", "Query Refinement",
                      "Spell-correct · expand · suggest",
                      "planned", "query", s.query_refinement_url, s.query_refinement_port),

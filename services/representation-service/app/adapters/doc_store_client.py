@@ -4,6 +4,10 @@ DB-centric pipeline: a representation is fitted from the **stored**
 documents in MongoDB, fetched a page at a time through the doc-store (never pymongo
 directly — that keeps the SOA boundary intact). Same paginated endpoint the indexer
 and the UI's database browser use, so every view of the corpus comes from one source.
+
+This is a **build-time** client only: it streams the corpus to fit a model. Reading
+the *original* top-k docs by id for display belongs to the query path, which now lives
+in the retrieval-service (it has its own doc-store client).
 """
 
 from __future__ import annotations
@@ -13,7 +17,7 @@ from typing import Iterator
 
 import httpx
 
-from shared.contracts import DocListResponse, DocsRequest, DocsResponse
+from shared.contracts import DocListResponse
 
 
 @dataclass(frozen=True)
@@ -69,21 +73,6 @@ class DocStoreClient:
             seq += len(page.docs)
             if len(page.docs) < page_limit:  # short page ⇒ reached the end
                 break
-
-    def fetch_originals(self, dataset_id: str, doc_ids: list[str]) -> dict[str, str]:
-        """Return ``{doc_id: original_text}`` for the given ids (query-time display).
-
-        This is the **by-id** read of the *original* documents the assignment grades —
-        the search results show the raw text, fetched from Mongo via the doc-store.
-        Missing ids are simply absent from the result.
-        """
-        if not doc_ids:
-            return {}
-        req = DocsRequest(dataset=dataset_id, doc_ids=doc_ids)
-        resp = self._client.post("/docs", json=req.model_dump())
-        resp.raise_for_status()
-        body = DocsResponse(**resp.json())
-        return {d.doc_id: d.text for d in body.docs}
 
     def close(self) -> None:
         self._client.close()
