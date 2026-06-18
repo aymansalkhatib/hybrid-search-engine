@@ -57,8 +57,10 @@ services:
     volumes:
       - ./data:/app/data
     depends_on:
-      - preprocessing-service
-      - doc-store-service   # the index is built from the docs stored in the doc-store
+      preprocessing-service:
+        condition: service_healthy
+      doc-store-service:      # the index is built from the docs stored in the doc-store
+        condition: service_healthy
     networks:
       - ir-net
     restart: unless-stopped
@@ -80,8 +82,10 @@ services:
     volumes:
       - ./data:/app/data
     depends_on:
-      - preprocessing-service
-      - doc-store-service   # the representation is fitted from the docs in the store
+      preprocessing-service:
+        condition: service_healthy
+      doc-store-service:      # the representation is fitted from the docs in the store
+        condition: service_healthy
     networks:
       - ir-net
     restart: unless-stopped
@@ -102,8 +106,10 @@ services:
     # Owns no artifacts (no data volume): it asks the representation-service for
     # per-model scores and reads original docs by id from the doc-store.
     depends_on:
-      - representation-service   # does the per-model scoring (/rank, /score)
-      - doc-store-service        # original docs read by id for display
+      representation-service:    # does the per-model scoring (/rank, /score)
+        condition: service_healthy
+      doc-store-service:         # original docs read by id for display
+        condition: service_healthy
     networks:
       - ir-net
     restart: unless-stopped
@@ -123,6 +129,15 @@ services:
     # published to the host — browse it via mongo-express, or the gateway/doc-store API.
     expose:
       - "27017"
+    # Mongo ships no built-in HEALTHCHECK, so define one — dependents gate on it via
+    # ``condition: service_healthy`` (a ping that passes only once mongod accepts
+    # connections) instead of starting the instant the container exists.
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - ir-net
     restart: unless-stopped
@@ -144,7 +159,8 @@ services:
     volumes:
       - ./data:/app/data
     depends_on:
-      - doc-store-db
+      doc-store-db:
+        condition: service_healthy
     networks:
       - ir-net
     restart: unless-stopped
@@ -159,7 +175,8 @@ services:
       ME_CONFIG_MONGODB_PORT: 27017
       ME_CONFIG_BASICAUTH: "false"
     depends_on:
-      - doc-store-db
+      doc-store-db:
+        condition: service_healthy
     networks:
       - ir-net
     restart: unless-stopped

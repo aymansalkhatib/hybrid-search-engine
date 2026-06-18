@@ -23,7 +23,7 @@ from app.adapters.doc_store_client import DocStoreClient
 from app.adapters.preprocessing_client import PreprocessingClient
 from app.api.routes import router
 from app.config import settings
-from app.domain.base import available_models
+from app.domain.base import REPRESENTATION_VERSION, available_models
 from shared.contracts import HealthResponse, ServiceInfo
 from shared.ir_common.errors import install_error_handlers
 from shared.ir_common.jobs import JobRegistry
@@ -37,13 +37,23 @@ async def lifespan(app: FastAPI):
     app.state.store = RepresentationStore(settings.artifacts_dir)
     app.state.preprocessing = PreprocessingClient(settings.preprocessing_url)
     app.state.doc_store = DocStoreClient(settings.doc_store_url)  # corpus source for builds
-    app.state.models = {}  # (dataset_id, model) -> BaseRepresentation (lazy-loaded)
+    app.state.models = {}  # (dataset_id, model) -> BaseRepresentation
+    # Warm the cache: load any already-built models now so the first query doesn't pay
+    # the (potentially multi-hundred-MB) pickle-load latency on the request path — keeps
+    # the online query within the ≤20 s budget. ``store.load`` is non-fatal (returns None
+    # on a corrupt/incompatible artifact), so a bad model simply stays lazy-loaded.
+    preloaded = 0
+    for built in app.state.store.list_built(REPRESENTATION_VERSION):
+        rep = app.state.store.load(built.dataset_id, built.model, REPRESENTATION_VERSION)
+        if rep is not None:
+            app.state.models[(built.dataset_id, built.model)] = rep
+            preloaded += 1
     # Runs builds as background jobs (one active per dataset+model) with live progress.
     app.state.jobs = JobRegistry()
     logger.info(
-        "%s v%s ready (artifacts=%s, models=%s)",
+        "%s v%s ready (artifacts=%s, models=%s, preloaded=%d)",
         settings.service_name, settings.version, settings.artifacts_dir,
-        ",".join(available_models()),
+        ",".join(available_models()), preloaded,
     )
     yield
     app.state.preprocessing.close()

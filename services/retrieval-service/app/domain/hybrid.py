@@ -14,6 +14,8 @@ constitution grades, now across a service boundary.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from app.adapters.representation_client import RepresentationClient
 from app.domain.fusion import reciprocal_rank_fusion, weighted_fusion
 
@@ -64,11 +66,23 @@ def parallel_search(
     b: float,
 ) -> list[Scored]:
     """Each component searches independently; their lists are fused into one ranking."""
-    pool = _pool(top_k)
-    ranked_lists = [
-        client.rank(dataset=dataset, model=name, query=query, top_k=pool, k1=k1, b=b)
-        for name in components
-    ]
+    candidate_pool = _pool(top_k)
+
+    # The components are independent, so issue their /rank calls concurrently instead of
+    # paying their network round-trips one after another (a 3-model parallel hybrid used
+    # to be 3 sequential calls). httpx.Client is thread-safe, and ThreadPoolExecutor.map
+    # preserves component order so ``weights`` still line up in weighted fusion.
+    def _rank(name: str) -> list[Scored]:
+        return client.rank(dataset=dataset, model=name, query=query, top_k=candidate_pool, k1=k1, b=b)
+
+    if not components:
+        ranked_lists = []
+    elif len(components) == 1:
+        ranked_lists = [_rank(components[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=len(components)) as executor:
+            ranked_lists = list(executor.map(_rank, components))
+
     if fusion == "weighted":
         fused = weighted_fusion(ranked_lists, weights)
     else:

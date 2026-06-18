@@ -20,6 +20,7 @@ from app.adapters.doc_store_client import DocStoreClient
 from app.adapters.preprocessing_client import PreprocessingClient
 from app.api.routes import router
 from app.config import settings
+from app.domain.inverted_index import INDEX_VERSION
 from shared.contracts import HealthResponse, ServiceInfo
 from shared.ir_common.errors import install_error_handlers
 from shared.ir_common.jobs import JobRegistry
@@ -33,14 +34,27 @@ async def lifespan(app: FastAPI):
     app.state.store = ArtifactStore(settings.artifacts_dir)
     app.state.preprocessing = PreprocessingClient(settings.preprocessing_url)
     app.state.doc_store = DocStoreClient(settings.doc_store_url)  # corpus source for builds
-    app.state.indexes = {}  # dataset_id -> InvertedIndex (lazy-loaded on first use)
+    app.state.indexes = {}  # dataset_id -> InvertedIndex
+    # Warm the cache: load any already-built index now so the first Boolean search doesn't
+    # pay the pickle-load latency on the request path. A corrupt artifact is skipped
+    # (logged) rather than blocking startup.
+    preloaded = 0
+    for dataset_id in app.state.store.list_datasets(INDEX_VERSION):
+        try:
+            index = app.state.store.load(dataset_id, INDEX_VERSION)
+        except Exception as exc:  # noqa: BLE001 — a bad artifact shouldn't block startup
+            logger.warning("could not preload index for %s: %s", dataset_id, exc)
+            continue
+        if index is not None:
+            app.state.indexes[dataset_id] = index
+            preloaded += 1
     # Runs builds as background jobs (one active per dataset) with live progress;
     # a second build for an in-flight dataset gets 409.
     app.state.jobs = JobRegistry()
     logger.info(
-        "%s v%s ready (artifacts=%s, preprocessing=%s)",
+        "%s v%s ready (artifacts=%s, preprocessing=%s, preloaded=%d)",
         settings.service_name, settings.version, settings.artifacts_dir,
-        settings.preprocessing_url,
+        settings.preprocessing_url, preloaded,
     )
     yield
     app.state.preprocessing.close()

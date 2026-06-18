@@ -5,6 +5,18 @@ doc: length; plus ``avgdl``), built offline from the preprocessed corpus. **k1 a
 b are applied at query time**, so the UI can change them per query (an explicit
 assignment requirement) without rebuilding anything.
 
+Relationship to the indexing-service's inverted index (deliberate, not an oversight):
+BM25 builds and owns its **own** postings instead of reading the indexing-service's
+index. The two are different on purpose — the indexing-service keeps a *matching*-
+optimized index (``list[tuple[int, int]]`` postings for Boolean set algebra), while
+BM25 keeps a *scoring*-optimized one (numpy ``int32``/``float32`` arrays + precomputed
+``idf``) for vectorized query-time scoring. Keeping it self-contained means the
+representation-service builds **and** scores BM25 with no build-time or query-time
+dependency on the indexing-service — the loose-coupling / independently-runnable
+property the project grades, and a dependency-free online path for
+the ≤20 s budget. The only cost is an offline duplicate of the preprocessing pass; in
+SOA that data duplication is the accepted trade for avoiding cross-service coupling.
+
 Scoring (per query term *t* in document *d*):
 
     score += qtf · idf(t) · ( tf · (k1 + 1) ) / ( tf + k1 · (1 − b + b · dl/avgdl) )
