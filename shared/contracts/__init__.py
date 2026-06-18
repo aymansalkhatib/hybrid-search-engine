@@ -55,6 +55,7 @@ from shared.contracts.representation import (
     WeightedTerm,
 )
 from shared.contracts.docstore import (
+    AllQrelsResponse,
     DatasetInfo,
     DatasetStatus,
     DeleteDatasetRequest,
@@ -65,7 +66,14 @@ from shared.contracts.docstore import (
     DocsResponse,
     DownloadDatasetRequest,
     PrepareDatasetRequest,
+    Qrel,
+    QrelListItem,
+    QrelsForQueryResponse,
+    QrelsListResponse,
+    QueryListItem,
+    QueryListResponse,
     RawDoc,
+    RawQuery,
 )
 
 __all__ = [
@@ -109,6 +117,7 @@ __all__ = [
     "SearchResponse",
     "TfidfParams",
     "WeightedTerm",
+    "AllQrelsResponse",
     "DatasetInfo",
     "DatasetStatus",
     "DeleteDatasetRequest",
@@ -119,5 +128,12 @@ __all__ = [
     "DocsResponse",
     "DownloadDatasetRequest",
     "PrepareDatasetRequest",
+    "Qrel",
+    "QrelListItem",
+    "QrelsForQueryResponse",
+    "QrelsListResponse",
+    "QueryListItem",
+    "QueryListResponse",
     "RawDoc",
+    "RawQuery",
 ]

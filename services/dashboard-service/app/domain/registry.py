@@ -52,7 +52,7 @@ def build_registry(settings) -> list[ServiceEntry]:
                      "Build & serve the inverted index (df · tf · avgdl)",
                      "built", "pipeline", s.indexing_url, s.indexing_port),
         ServiceEntry("docstore", "Doc Store",
-                     "Raw docs in MongoDB — read BY ID at query time",
+                     "Docs + queries + qrels in MongoDB — read BY ID at query time",
                      "built", "pipeline", s.doc_store_url, s.doc_store_port),
         ServiceEntry("representation", "Representation",
                      "TF-IDF (VSM) · BM25 & Embeddings next",

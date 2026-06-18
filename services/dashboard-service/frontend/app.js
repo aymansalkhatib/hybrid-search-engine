@@ -10,6 +10,8 @@ const state = {
   catalog: null,       // gateway /catalog response
   dataset: null,       // currently focused dataset id
   browse: { offset: 0, limit: 10 },
+  qbrowse: { offset: 0, limit: 10 },  // test-queries browser
+  selectedQuery: null, // query_id whose qrels are shown
   polling: {},         // datasetId -> intervalId (job pollers)
   indexOptions: null,  // the focused dataset's index preprocessing options (for Normalize)
   repModel: "tfidf",   // representation model in focus
@@ -443,6 +445,51 @@ async function browseDocs(reset = false) {
 }
 const trunc = (s, n) => (s && s.length > n ? s.slice(0, n) + " …" : s || "");
 
+/* ---- test queries + qrels ---- */
+async function browseQueries(reset = false) {
+  if (reset) { state.qbrowse.offset = 0; state.selectedQuery = null; renderQrels(null); }
+  const { offset, limit } = state.qbrowse;
+  const out = $("#dsQueries");
+  out.className = "loading"; out.innerHTML = `<span class="spinner"></span> loading…`;
+  const r = await api("docstore", "queries", { query: { dataset: state.dataset, offset, limit } });
+  if (!r.ok) { out.className = "result-empty"; out.textContent = `Error: ${errMsg(r)} (ingest the dataset first?)`; return; }
+  const d = r.data;
+  $("#qPageInfo").textContent = d.total ? `${fmt(offset + 1)}–${fmt(Math.min(offset + limit, d.total))} of ${fmt(d.total)}` : "0 queries";
+  $("#qPrev").disabled = offset <= 0;
+  $("#qNext").disabled = offset + limit >= d.total;
+  if (!d.queries.length) { out.className = "result-empty"; out.textContent = "No queries stored for this dataset yet."; return; }
+  out.className = "";
+  out.innerHTML = `<table class="tbl">
+    <thead><tr><th style="width:90px">query_id</th><th>text</th><th style="width:74px"></th></tr></thead>
+    <tbody>${d.queries.map((x) => `<tr class="q-row${x.query_id === state.selectedQuery ? " sel" : ""}" data-qid="${esc(x.query_id)}">
+      <td class="mono">${esc(x.query_id)}</td>
+      <td>${esc(trunc(x.text, 200))}</td>
+      <td><button class="btn btn-ghost btn-sm" data-qid="${esc(x.query_id)}">qrels ›</button></td></tr>`).join("")}</tbody></table>`;
+}
+
+async function loadQrelsForQuery(queryId) {
+  state.selectedQuery = queryId;
+  $$("#dsQueries .q-row").forEach((tr) => tr.classList.toggle("sel", tr.dataset.qid === queryId));
+  const out = $("#dsQrels");
+  out.className = "loading"; out.innerHTML = `<span class="spinner"></span> loading judgments…`;
+  const r = await api("docstore", "qrels", { query: { dataset: state.dataset, query_id: queryId } });
+  if (!r.ok) { out.className = "result-empty"; out.textContent = `Error: ${errMsg(r)}`; return; }
+  renderQrels(r.data);
+}
+
+function renderQrels(d) {
+  const out = $("#dsQrels");
+  if (!d) { out.className = "result-empty"; out.textContent = "Pick a query on the left to see its judged documents."; return; }
+  if (!d.judgments.length) { out.className = "result-empty"; out.textContent = `No judgments stored for query ${esc(d.query_id)}.`; return; }
+  out.className = "";
+  out.innerHTML = `<div class="hint">Judged docs for query <b class="mono">${esc(d.query_id)}</b> — ${fmt(d.judgments.length)} judgment(s).</div>
+    <table class="tbl">
+      <thead><tr><th>doc_id</th><th style="width:110px">relevance</th></tr></thead>
+      <tbody>${d.judgments.map((j) => `<tr>
+        <td class="mono">${esc(j.doc_id)}</td>
+        <td>${esc(j.relevance)}</td></tr>`).join("")}</tbody></table>`;
+}
+
 /* ============================================================
    INDEX EXPLORER
    ============================================================ */
@@ -867,7 +914,7 @@ function onViewEnter(view) {
   if (view === "index") loadIndexStats();
   if (view === "representation") loadRepresentation();
   if (view === "search") seSyncControls();
-  if (view === "docstore") browseDocs(true);
+  if (view === "docstore") { browseDocs(true); browseQueries(true); }
   if (view === "services") renderServices();
   if (view === "overview") renderOverview();
 }
@@ -890,6 +937,10 @@ function wireActions() {
   $("#dsDocId").addEventListener("keydown", (e) => e.key === "Enter" && fetchDocById());
   $("#dsPrev").addEventListener("click", () => { state.browse.offset = Math.max(0, state.browse.offset - state.browse.limit); browseDocs(); });
   $("#dsNext").addEventListener("click", () => { state.browse.offset += state.browse.limit; browseDocs(); });
+  // test queries + qrels
+  $("#qPrev").addEventListener("click", () => { state.qbrowse.offset = Math.max(0, state.qbrowse.offset - state.qbrowse.limit); browseQueries(); });
+  $("#qNext").addEventListener("click", () => { state.qbrowse.offset += state.qbrowse.limit; browseQueries(); });
+  $("#dsQueries").addEventListener("click", (e) => { const b = e.target.closest("[data-qid]"); if (b) loadQrelsForQuery(b.dataset.qid); });
 
   // index
   $("#ixReload").addEventListener("click", loadIndexStats);

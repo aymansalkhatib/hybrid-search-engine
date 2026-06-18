@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     mongo_docs_collection: str = Field(
         default="documents", validation_alias="MONGO_DOCS_COLLECTION"
     )
+    mongo_queries_collection: str = Field(
+        default="queries", validation_alias="MONGO_QUERIES_COLLECTION"
+    )
+    mongo_qrels_collection: str = Field(
+        default="qrels", validation_alias="MONGO_QRELS_COLLECTION"
+    )
     ingest_batch_size: int = Field(
         default=5000, validation_alias="DOC_STORE_INGEST_BATCH_SIZE"
     )

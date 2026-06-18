@@ -1,14 +1,20 @@
-"""MongoDB adapter for the raw-document store.
+"""MongoDB adapter for the dataset store (documents + queries + qrels).
 
-One collection holds every dataset's raw docs as ``{dataset, seq, doc_id, text}``:
+Each dataset fact type lives in its **own collection**, keyed by ``dataset`` so several
+datasets share the store without colliding:
 
-* a **unique index on (dataset, doc_id)** — the by-ID lookup used at query time, and
-  it also blocks duplicate ingests;
-* an index on **(dataset, seq)** — ``seq`` is the 0-based ingest position, giving a
-  stable order for **paginated browsing** and for the indexer to **page the corpus**.
+* ``documents`` — ``{dataset, seq, doc_id, text}``; unique ``(dataset, doc_id)`` is the
+  by-ID lookup used at query time (and blocks duplicate ingests); ``(dataset, seq)``
+  gives a stable order for paginated browsing and for the indexer to page the corpus.
+* ``queries`` — ``{dataset, seq, query_id, text}``; unique ``(dataset, query_id)``.
+* ``qrels`` — ``{dataset, seq, query_id, doc_id, relevance}`` (the TREC qrels shape, one
+  document per judgment); unique ``(dataset, query_id, doc_id)`` dedupes / makes ingest
+  idempotent, and ``(dataset, query_id)`` groups a query's gold set in one indexed scan.
 
-The original text is stored verbatim (never preprocessed); it is what the UI displays
-for the top-k results and the single source the inverted index is built from.
+``seq`` is the 0-based ingest position in every collection, so each supports stable
+paginated browsing. The original document text is stored verbatim (never preprocessed);
+it is what the UI displays for the top-k results and the single source the inverted index
+is built from.
 """
 
 from __future__ import annotations
@@ -23,11 +29,21 @@ logger = logging.getLogger("doc-store-service")
 
 
 class MongoDocStore:
-    def __init__(self, url: str, db_name: str, collection: str) -> None:
+    def __init__(
+        self,
+        url: str,
+        db_name: str,
+        collection: str,
+        queries_collection: str = "queries",
+        qrels_collection: str = "qrels",
+    ) -> None:
         # Fail fast (3s) when Mongo is unreachable so endpoints return 503 quickly
         # instead of hanging the whole request.
         self._client: MongoClient = MongoClient(url, serverSelectionTimeoutMS=3000)
-        self._coll = self._client[db_name][collection]
+        db = self._client[db_name]
+        self._coll = db[collection]
+        self._queries = db[queries_collection]
+        self._qrels = db[qrels_collection]
 
     def ping(self) -> bool:
         try:
@@ -49,12 +65,49 @@ class MongoDocStore:
             [("dataset", ASCENDING), ("seq", ASCENDING)],
             name="dataset_seq",
         )
+        # queries: one row per (dataset, query_id); seq for stable browsing.
+        self._queries.create_index(
+            [("dataset", ASCENDING), ("query_id", ASCENDING)],
+            unique=True,
+            name="dataset_queryid",
+        )
+        self._queries.create_index(
+            [("dataset", ASCENDING), ("seq", ASCENDING)],
+            name="queries_dataset_seq",
+        )
+        # qrels: one row per judgment; unique (dataset, query_id, doc_id) dedupes,
+        # (dataset, query_id) groups a query's gold set, seq for stable browsing.
+        self._qrels.create_index(
+            [("dataset", ASCENDING), ("query_id", ASCENDING), ("doc_id", ASCENDING)],
+            unique=True,
+            name="dataset_query_doc",
+        )
+        self._qrels.create_index(
+            [("dataset", ASCENDING), ("query_id", ASCENDING)],
+            name="qrels_dataset_query",
+        )
+        self._qrels.create_index(
+            [("dataset", ASCENDING), ("seq", ASCENDING)],
+            name="qrels_dataset_seq",
+        )
 
     def count(self, dataset_id: str) -> int:
         return self._coll.count_documents({"dataset": dataset_id})
 
+    def count_queries(self, dataset_id: str) -> int:
+        return self._queries.count_documents({"dataset": dataset_id})
+
+    def count_qrels(self, dataset_id: str) -> int:
+        return self._qrels.count_documents({"dataset": dataset_id})
+
     def delete_dataset(self, dataset_id: str) -> int:
         return self._coll.delete_many({"dataset": dataset_id}).deleted_count
+
+    def delete_queries(self, dataset_id: str) -> int:
+        return self._queries.delete_many({"dataset": dataset_id}).deleted_count
+
+    def delete_qrels(self, dataset_id: str) -> int:
+        return self._qrels.delete_many({"dataset": dataset_id}).deleted_count
 
     def write_batch(self, dataset_id: str, docs: list[tuple[int, str, str]]) -> None:
         """Insert a batch of ``(seq, doc_id, text)`` rows."""
@@ -62,6 +115,29 @@ class MongoDocStore:
             return
         self._coll.insert_many(
             [{"dataset": dataset_id, "seq": s, "doc_id": d, "text": t} for s, d, t in docs],
+            ordered=False,
+        )
+
+    def write_queries_batch(self, dataset_id: str, rows: list[tuple[int, str, str]]) -> None:
+        """Insert a batch of ``(seq, query_id, text)`` query rows."""
+        if not rows:
+            return
+        self._queries.insert_many(
+            [{"dataset": dataset_id, "seq": s, "query_id": q, "text": t} for s, q, t in rows],
+            ordered=False,
+        )
+
+    def write_qrels_batch(
+        self, dataset_id: str, rows: list[tuple[int, str, str, int]]
+    ) -> None:
+        """Insert a batch of ``(seq, query_id, doc_id, relevance)`` judgment rows."""
+        if not rows:
+            return
+        self._qrels.insert_many(
+            [
+                {"dataset": dataset_id, "seq": s, "query_id": q, "doc_id": d, "relevance": r}
+                for s, q, d, r in rows
+            ],
             ordered=False,
         )
 
@@ -93,6 +169,68 @@ class MongoDocStore:
             projection={"_id": 0, "doc_id": 1, "text": 1},
         )
         return {d["doc_id"]: d["text"] for d in cursor}
+
+    # ---- queries -------------------------------------------------------
+
+    def get_query(self, dataset_id: str, query_id: str) -> str | None:
+        q = self._queries.find_one(
+            {"dataset": dataset_id, "query_id": query_id},
+            projection={"_id": 0, "text": 1},
+        )
+        return None if q is None else q["text"]
+
+    def list_queries(self, dataset_id: str, offset: int, limit: int) -> list[dict]:
+        """A page of stored queries ordered by ``seq`` in ``[offset, offset+limit)``."""
+        cursor = self._queries.find(
+            {"dataset": dataset_id, "seq": {"$gte": offset, "$lt": offset + limit}},
+            projection={"_id": 0, "seq": 1, "query_id": 1, "text": 1},
+        ).sort("seq", ASCENDING)
+        return [
+            {"seq": q["seq"], "query_id": q["query_id"], "text": q["text"]} for q in cursor
+        ]
+
+    # ---- qrels ---------------------------------------------------------
+
+    def get_qrels_for_query(self, dataset_id: str, query_id: str) -> list[dict]:
+        """All judged ``(doc_id, relevance)`` rows for one query (a query's gold set)."""
+        cursor = self._qrels.find(
+            {"dataset": dataset_id, "query_id": query_id},
+            projection={"_id": 0, "query_id": 1, "doc_id": 1, "relevance": 1},
+        )
+        return [
+            {"query_id": j["query_id"], "doc_id": j["doc_id"], "relevance": j["relevance"]}
+            for j in cursor
+        ]
+
+    def list_qrels(self, dataset_id: str, offset: int, limit: int) -> list[dict]:
+        """A page of stored judgments ordered by ``seq`` in ``[offset, offset+limit)``."""
+        cursor = self._qrels.find(
+            {"dataset": dataset_id, "seq": {"$gte": offset, "$lt": offset + limit}},
+            projection={"_id": 0, "seq": 1, "query_id": 1, "doc_id": 1, "relevance": 1},
+        ).sort("seq", ASCENDING)
+        return [
+            {
+                "seq": j["seq"],
+                "query_id": j["query_id"],
+                "doc_id": j["doc_id"],
+                "relevance": j["relevance"],
+            }
+            for j in cursor
+        ]
+
+    def all_qrels(self, dataset_id: str) -> dict[str, dict[str, int]]:
+        """Reconstruct the nested ``{query_id: {doc_id: relevance}}`` map (eval shape).
+
+        Safe to materialize whole: qrels are small (≈15K judgments for Quora).
+        """
+        cursor = self._qrels.find(
+            {"dataset": dataset_id},
+            projection={"_id": 0, "query_id": 1, "doc_id": 1, "relevance": 1},
+        )
+        qrels: dict[str, dict[str, int]] = {}
+        for j in cursor:
+            qrels.setdefault(j["query_id"], {})[j["doc_id"]] = j["relevance"]
+        return qrels
 
     def close(self) -> None:
         self._client.close()

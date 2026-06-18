@@ -50,6 +50,7 @@ Microservices (FastAPI) behind an **API Gateway**, with a **Streamlit** UI.
 | retrieval-service | 8004 | Matching, ranking, hybrid + fusion |
 | query-refinement-service | 8005 | Correction, expansion, suggestion |
 | evaluation-service | 8006 | MAP / Recall / P@10 / nDCG |
+| doc-store-service | 8007 | Docs + queries + qrels in MongoDB, read by ID |
 | ui | 8501 | Streamlit web UI |
 
 ## Tech stack

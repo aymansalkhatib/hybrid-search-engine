@@ -16,8 +16,9 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from app.config import settings
 from app.domain.download_progress import DownloadMonitor
-from app.domain.ingest import ingest_documents
+from app.domain.ingest import ingest_documents, ingest_qrels, ingest_queries
 from shared.contracts import (
+    AllQrelsResponse,
     DatasetInfo,
     DatasetStatus,
     DeleteResult,
@@ -28,7 +29,14 @@ from shared.contracts import (
     DownloadDatasetRequest,
     JobStatus,
     PrepareDatasetRequest,
+    Qrel,
+    QrelListItem,
+    QrelsForQueryResponse,
+    QrelsListResponse,
+    QueryListItem,
+    QueryListResponse,
     RawDoc,
+    RawQuery,
     ref_from_job,
     status_from_job,
 )
@@ -139,6 +147,8 @@ def dataset_status(
         downloaded=is_downloaded(settings.dataset_home, dataset_id),
         ingested=n > 0,
         ingested_count=n,
+        queries_count=store.count_queries(dataset_id),
+        qrels_count=store.count_qrels(dataset_id),
         doc_count=doc_count,
         fully_ingested=fully,
         active_job=ref_from_job(active) if active else None,
@@ -189,11 +199,13 @@ def download_dataset(req: DownloadDatasetRequest, request: Request) -> JobStatus
 
 @router.post("/dataset/prepare", response_model=JobStatus, status_code=status.HTTP_202_ACCEPTED)
 def prepare_dataset(req: PrepareDatasetRequest, request: Request) -> JobStatus:
-    """Ingest the **raw** docs into Mongo (background job, offline).
+    """Ingest the dataset's facts into Mongo: **docs + queries + qrels** (background, offline).
 
     Requires the corpus already downloaded (else **409** — call ``/dataset/download``
-    first). Reports progress as ``ingested/total``. Idempotent: skips when already
-    present unless ``force``; a concurrent prepare of the same dataset returns **409**.
+    first). Docs dominate progress (``ingested/total``); the small queries/qrels are a
+    quick final phase. Idempotent **per collection**: each is (re)ingested only if empty
+    or ``force`` is set — so a store that already has docs (from before queries/qrels
+    existed) gets backfilled on the next prepare. A concurrent prepare returns **409**.
     """
     dataset_id = _resolve_or_400(req.dataset)
     store = _require_mongo(request)
@@ -210,21 +222,65 @@ def prepare_dataset(req: PrepareDatasetRequest, request: Request) -> JobStatus:
     batch_size = settings.ingest_batch_size
 
     def fn(progress: Progress) -> dict:
-        existing = store.count(dataset_id)
-        if existing > 0 and not force:
-            return {"skipped": True, "dataset_id": dataset_id, "ingested_count": existing}
+        docs_n = store.count(dataset_id)
+        queries_n = store.count_queries(dataset_id)
+        qrels_n = store.count_qrels(dataset_id)
+        if not force and docs_n > 0 and queries_n > 0 and qrels_n > 0:
+            return {
+                "skipped": True,
+                "dataset_id": dataset_id,
+                "ingested_count": docs_n,
+                "queries_count": queries_n,
+                "qrels_count": qrels_n,
+            }
         total = manifest_doc_count(home, dataset_id) or DatasetLoader(dataset_id).doc_count()
         progress.update(total=total, message="ingesting raw docs")
         store.ensure_indexes()          # idempotent — also covers a Mongo-not-ready startup
-        store.delete_dataset(dataset_id)  # clean slate (idempotent re-ingest)
         loader = DatasetLoader(dataset_id)
-        count = ingest_documents(
-            docs=loader.iter_docs(),
-            write_batch=lambda batch: store.write_batch(dataset_id, batch),
-            batch_size=batch_size,
-            on_progress=lambda n: progress.update(processed=n),
-        )
-        return {"skipped": False, "dataset_id": dataset_id, "ingested_count": count}
+
+        # Documents — the heavy phase that drives the progress bar.
+        if force or docs_n == 0:
+            store.delete_dataset(dataset_id)  # clean slate (idempotent re-ingest)
+            docs_count = ingest_documents(
+                docs=loader.iter_docs(),
+                write_batch=lambda batch: store.write_batch(dataset_id, batch),
+                batch_size=batch_size,
+                on_progress=lambda n: progress.update(processed=n),
+            )
+        else:
+            docs_count = docs_n
+
+        # Queries — small; keep the bar full and just switch the message.
+        if force or queries_n == 0:
+            store.delete_queries(dataset_id)
+            progress.update(message="ingesting queries")
+            queries_count = ingest_queries(
+                queries=loader.iter_queries(),
+                write_batch=lambda batch: store.write_queries_batch(dataset_id, batch),
+                batch_size=batch_size,
+            )
+        else:
+            queries_count = queries_n
+
+        # Qrels — small; one row per (query_id, doc_id) judgment.
+        if force or qrels_n == 0:
+            store.delete_qrels(dataset_id)
+            progress.update(message="ingesting qrels")
+            qrels_count = ingest_qrels(
+                qrels=loader.iter_qrels(),
+                write_batch=lambda batch: store.write_qrels_batch(dataset_id, batch),
+                batch_size=batch_size,
+            )
+        else:
+            qrels_count = qrels_n
+
+        return {
+            "skipped": False,
+            "dataset_id": dataset_id,
+            "ingested_count": docs_count,
+            "queries_count": queries_count,
+            "qrels_count": qrels_count,
+        }
 
     return status_from_job(_submit_or_409(request, "ingest", dataset_id, fn))
 
@@ -234,23 +290,32 @@ def delete_dataset(
     request: Request,
     dataset: str = Query(..., description="Dataset id from the catalog"),
     files: bool = Query(True, description="Delete the downloaded corpus folder"),
-    docs: bool = Query(True, description="Delete the ingested raw docs from Mongo"),
+    docs: bool = Query(True, description="Delete the ingested docs/queries/qrels from Mongo"),
 ) -> DeleteResult:
-    """Independently remove a dataset's local data — other datasets are unaffected."""
+    """Independently remove a dataset's local data — other datasets are unaffected.
+
+    ``docs=true`` clears all three Mongo collections for this dataset (documents,
+    queries, qrels) since they are the same dataset's facts.
+    """
     dataset_id = _resolve_or_400(dataset)
     if _active_job(request, dataset_id) is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"a job is in progress for dataset '{dataset}'; wait for it to finish",
         )
-    docs_deleted = 0
+    docs_deleted = queries_deleted = qrels_deleted = 0
     if docs:
-        docs_deleted = _require_mongo(request).delete_dataset(dataset_id)
+        store = _require_mongo(request)
+        docs_deleted = store.delete_dataset(dataset_id)
+        queries_deleted = store.delete_queries(dataset_id)
+        qrels_deleted = store.delete_qrels(dataset_id)
     files_deleted = delete_dataset_files(settings.dataset_home, dataset_id) if files else False
     return DeleteResult(
         dataset_id=dataset_id,
         files_deleted=files_deleted,
         docs_deleted=docs_deleted,
+        queries_deleted=queries_deleted,
+        qrels_deleted=qrels_deleted,
     )
 
 
@@ -326,3 +391,95 @@ def list_docs(
         limit=limit,
         docs=[DocListItem(**r) for r in rows],
     )
+
+
+# ---- queries -------------------------------------------------------------
+
+@router.get("/queries", response_model=QueryListResponse)
+def list_queries(
+    request: Request,
+    dataset: str = Query(..., description="Dataset id from the catalog"),
+    offset: int = Query(0, ge=0, description="Starting seq (0-based position) of the page"),
+    limit: int = Query(50, ge=1, le=5000, description="Page size"),
+) -> QueryListResponse:
+    """Browse the stored test queries by page, ordered by ingest position (``seq``)."""
+    dataset_id = _resolve_or_400(dataset)
+    store = _require_mongo(request)
+    total = store.count_queries(dataset_id)
+    rows = store.list_queries(dataset_id, offset=offset, limit=limit)
+    return QueryListResponse(
+        dataset_id=dataset_id,
+        total=total,
+        offset=offset,
+        limit=limit,
+        queries=[QueryListItem(**r) for r in rows],
+    )
+
+
+@router.get("/query", response_model=RawQuery)
+def get_query(
+    request: Request,
+    dataset: str = Query(..., description="Dataset id from the catalog"),
+    query_id: str = Query(...),
+) -> RawQuery:
+    """Return a single test query's text by id."""
+    dataset_id = _resolve_or_400(dataset)
+    store = _require_mongo(request)
+    text = store.get_query(dataset_id, query_id)
+    if text is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"query '{query_id}' not in store for dataset '{dataset}'",
+        )
+    return RawQuery(query_id=query_id, text=text)
+
+
+# ---- qrels (relevance judgments) -----------------------------------------
+
+@router.get("/qrels", response_model=QrelsForQueryResponse)
+def get_qrels_for_query(
+    request: Request,
+    dataset: str = Query(..., description="Dataset id from the catalog"),
+    query_id: str = Query(...),
+) -> QrelsForQueryResponse:
+    """All judged documents (the gold set) for a single query."""
+    dataset_id = _resolve_or_400(dataset)
+    store = _require_mongo(request)
+    rows = store.get_qrels_for_query(dataset_id, query_id)
+    return QrelsForQueryResponse(
+        dataset_id=dataset_id,
+        query_id=query_id,
+        judgments=[Qrel(**r) for r in rows],
+    )
+
+
+@router.get("/qrels/list", response_model=QrelsListResponse)
+def list_qrels(
+    request: Request,
+    dataset: str = Query(..., description="Dataset id from the catalog"),
+    offset: int = Query(0, ge=0, description="Starting seq (0-based position) of the page"),
+    limit: int = Query(50, ge=1, le=5000, description="Page size"),
+) -> QrelsListResponse:
+    """Browse all stored relevance judgments by page, ordered by ``seq``."""
+    dataset_id = _resolve_or_400(dataset)
+    store = _require_mongo(request)
+    total = store.count_qrels(dataset_id)
+    rows = store.list_qrels(dataset_id, offset=offset, limit=limit)
+    return QrelsListResponse(
+        dataset_id=dataset_id,
+        total=total,
+        offset=offset,
+        limit=limit,
+        qrels=[QrelListItem(**r) for r in rows],
+    )
+
+
+@router.get("/qrels/all", response_model=AllQrelsResponse)
+def all_qrels(
+    request: Request,
+    dataset: str = Query(..., description="Dataset id from the catalog"),
+) -> AllQrelsResponse:
+    """The full qrels as ``{query_id: {doc_id: relevance}}`` — the eval/fusion input shape."""
+    dataset_id = _resolve_or_400(dataset)
+    store = _require_mongo(request)
+    return AllQrelsResponse(dataset_id=dataset_id, qrels=store.all_qrels(dataset_id))

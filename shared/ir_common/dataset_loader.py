@@ -55,6 +55,16 @@ class DatasetLoader:
         for q in self._ds.queries_iter():
             yield Query(query_id=q.query_id, text=_query_text(q))
 
+    def iter_qrels(self) -> Iterator[tuple[str, str, int]]:
+        """Yield relevance judgments as flat ``(query_id, doc_id, relevance)`` tuples.
+
+        Used by the **prepare** step to stream qrels into MongoDB one row at a time,
+        without building the whole nested dict in memory (the TREC qrels shape, one
+        document per judgment). Use :meth:`get_qrels` when the nested map is wanted.
+        """
+        for qrel in self._ds.qrels_iter():
+            yield (qrel.query_id, qrel.doc_id, int(qrel.relevance))
+
     def get_qrels(self) -> dict[str, dict[str, int]]:
         """Return relevance judgments as {query_id: {doc_id: relevance}}."""
         qrels: dict[str, dict[str, int]] = {}

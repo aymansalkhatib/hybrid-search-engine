@@ -1,8 +1,16 @@
-"""Contracts for the doc-store-service (raw/original documents in MongoDB).
+"""Contracts for the doc-store-service (the dataset's persisted ground truth in MongoDB).
 
-The doc-store owns the **original** document text, keyed by ``doc_id`` per dataset.
-It is populated **offline** (download + ingest) and read **by ID at query time** to
-display the original document — the TA-graded requirement.
+The doc-store owns three kinds of dataset facts, each in its own collection:
+
+* **documents** — the **original** document text, keyed by ``doc_id`` per dataset;
+* **queries** — the dataset's test queries, keyed by ``query_id``;
+* **qrels** — the relevance judgments, one row per ``(query_id, doc_id)`` (the TREC
+  qrels shape), consumed later by the evaluation/query-refinement services.
+
+All three are populated **offline** (download + prepare) and read **by ID at query
+time** — the documents path is the TA-graded "original by id" requirement;
+queries/qrels are read by id the same way instead of re-reading
+``ir_datasets`` on every call.
 
 A dataset is referenced by its **id** (a value from the configured ``DATASETS``
 catalog), so callers stay dataset-agnostic. The download and ingest are long
@@ -32,6 +40,8 @@ class DatasetStatus(BaseModel):
     downloaded: bool        # True if the corpus is fully fetched locally (offline-ready)
     ingested: bool          # True if any raw docs are stored for this dataset
     ingested_count: int     # number of raw docs stored
+    queries_count: int = 0  # number of test queries stored
+    qrels_count: int = 0    # number of relevance judgments stored
     doc_count: Optional[int] = None        # total docs in the dataset (manifest/with_total)
     fully_ingested: Optional[bool] = None  # ingested_count >= doc_count (only with_total)
     active_job: Optional[JobRef] = None    # in-flight download/ingest, if any
@@ -74,6 +84,8 @@ class DeleteResult(BaseModel):
     dataset_id: str
     files_deleted: bool     # the on-disk corpus folder was removed
     docs_deleted: int       # number of raw docs removed from Mongo
+    queries_deleted: int = 0  # number of test queries removed from Mongo
+    qrels_deleted: int = 0    # number of relevance judgments removed from Mongo
 
 
 class RawDoc(BaseModel):
@@ -113,3 +125,74 @@ class DocsRequest(BaseModel):
 class DocsResponse(BaseModel):
     docs: list[RawDoc]
     missing: list[str]      # ids not found in the store
+
+
+# ---- queries -------------------------------------------------------------
+
+class RawQuery(BaseModel):
+    query_id: str
+    text: str               # the test query's text (as shipped by the dataset)
+
+
+class QueryListItem(BaseModel):
+    """One row of a paginated query listing (browse the stored test queries)."""
+
+    seq: int                # 0-based position in the dataset's stored order
+    query_id: str
+    text: str
+
+
+class QueryListResponse(BaseModel):
+    """A page of stored test queries — ordered by ``seq`` (the ingest position)."""
+
+    dataset_id: str
+    total: int              # total queries stored for this dataset
+    offset: int             # starting seq of this page
+    limit: int              # page size requested
+    queries: list[QueryListItem]
+
+
+# ---- qrels (relevance judgments) -----------------------------------------
+
+class Qrel(BaseModel):
+    """One relevance judgment — the TREC qrels shape (query_id, doc_id, relevance)."""
+
+    query_id: str
+    doc_id: str
+    relevance: int
+
+
+class QrelsForQueryResponse(BaseModel):
+    """All judged documents for a single query (for inspection / a query's gold set)."""
+
+    dataset_id: str
+    query_id: str
+    judgments: list[Qrel]
+
+
+class QrelListItem(Qrel):
+    """One row of a paginated qrels listing (browse all judgments)."""
+
+    seq: int                # 0-based position in the dataset's stored order
+
+
+class QrelsListResponse(BaseModel):
+    """A page of stored relevance judgments — ordered by ``seq``."""
+
+    dataset_id: str
+    total: int              # total judgments stored for this dataset
+    offset: int             # starting seq of this page
+    limit: int              # page size requested
+    qrels: list[QrelListItem]
+
+
+class AllQrelsResponse(BaseModel):
+    """The full qrels as the nested ``{query_id: {doc_id: relevance}}`` map.
+
+    This is the shape ``ranx``/``pytrec_eval`` consume directly, so the evaluation
+    service can load a dataset's gold judgments in one call instead of re-reading
+    ir_datasets. Safe to return whole because qrels are small (≈15K for Quora).
+    """
+
+    dataset_id: str
+    qrels: dict[str, dict[str, int]]

@@ -228,22 +228,32 @@ curl -s -X POST localhost:8001/preprocess \
 - Options (all optional, sensible defaults): `lowercase`, `remove_stopwords`, `stem`,
   `lemmatize`, `min_token_length`.
 
-### 5.2 `doc-store-service` (:8007) — original docs in MongoDB
+### 5.2 `doc-store-service` (:8007) — the dataset's facts in MongoDB
 
-Owns the **raw/original** text, keyed by `doc_id` per dataset. Populated offline; read **by id**
-at query time (a graded requirement). Other services never touch Mongo directly.
+Owns the dataset's persisted ground truth in **three collections**, each keyed by `dataset`:
+`documents` (the **raw/original** text, keyed by `doc_id`), `queries` (test queries, keyed by
+`query_id`), and `qrels` (relevance judgments, one row per `(query_id, doc_id)` — the TREC shape).
+All are populated offline and read **by id** at query time — the docs path is the graded
+"original by id" requirement; queries/qrels are read by id the same way so the evaluation and
+query‑refinement services don't re‑read ir‑datasets each call. Other services never touch Mongo
+directly.
 
 | Endpoint | What it does |
 |----------|--------------|
 | `GET /dataset/info?dataset=<id>` | **details before download** (network‑free): `{doc_count, num_queries, num_qrels, has_qrels, downloaded}` from ir‑datasets metadata — for a UI preview. Needs no database |
 | `POST /dataset/download` | **The only endpoint that uses the internet.** Starts a background download into `data/dataset/<id>/`; returns a `JobStatus`. Idempotent (`skipped`); `force:true` re‑fetches; concurrent → **409** |
-| `POST /dataset/prepare` | **offline** background ingest of raw docs to Mongo — requires download first (else **409**). Returns a `JobStatus`; `{limit?, force?}` |
-| `GET /dataset/status?dataset=beir/quora/test` | readiness → `{downloaded, ingested_count, doc_count, active_job}` (cheap). Add `&with_total=true` for `fully_ingested` (verify a **full** ingest) |
+| `POST /dataset/prepare` | **offline** background ingest of **docs + queries + qrels** to Mongo — requires download first (else **409**). Docs drive progress; queries/qrels are a quick final phase. Idempotent **per collection** (`force:true` re‑ingests all three). Returns a `JobStatus` |
+| `GET /dataset/status?dataset=beir/quora/test` | readiness → `{downloaded, ingested_count, queries_count, qrels_count, doc_count, active_job}` (cheap). Add `&with_total=true` for `fully_ingested` (verify a **full** ingest) |
 | `GET /jobs/{id}` · `GET /jobs?type=&dataset=` | poll one job / list jobs (download + ingest) |
-| `DELETE /dataset?dataset=beir/quora/test&files=&docs=` | independently delete the corpus folder and/or Mongo docs (others unaffected) |
-| `GET /doc?dataset=beir/quora/test&doc_id=…` | one original doc by id (404 if absent) |
-| `POST /docs` | batch fetch by id → `{docs:[…], missing:[…]}` (used by retrieval for top‑k) |
+| `DELETE /dataset?dataset=beir/quora/test&files=&docs=` | independently delete the corpus folder and/or Mongo data; `docs=true` clears **all three** collections (others unaffected) |
+| `GET /doc?dataset=…&doc_id=…` | one original doc by id (404 if absent) |
+| `POST /docs` | batch fetch docs by id → `{docs:[…], missing:[…]}` (used by retrieval for top‑k) |
 | `GET /docs/list?dataset=…&offset=&limit=` | **browse** stored docs by page (ordered by `seq`) → `{total, offset, limit, docs:[{seq, doc_id, text}]}`. Backs the UI viewer **and** the index build source |
+| `GET /queries?dataset=…&offset=&limit=` | **browse** stored test queries by page → `{total, offset, limit, queries:[{seq, query_id, text}]}` |
+| `GET /query?dataset=…&query_id=…` | one test query's text by id (404 if absent) |
+| `GET /qrels?dataset=…&query_id=…` | the gold set for one query → `{query_id, judgments:[{query_id, doc_id, relevance}]}` |
+| `GET /qrels/list?dataset=…&offset=&limit=` | **browse** all judgments by page (ordered by `seq`) |
+| `GET /qrels/all?dataset=…` | the full qrels as `{query_id:{doc_id:relevance}}` — the shape `ranx`/`pytrec_eval` consume |
 
 ```bash
 curl -s -X POST localhost:8007/docs \
@@ -302,7 +312,7 @@ whole project folder is portable — copy it to move or back up.
 |------|-------|-----------|
 | `data/dataset/<id>/` | each downloaded dataset in its **own** folder (corpus + qrels + `.manifest.json`) | `./data:/app/data` |
 | `data/artifacts/` | built inverted indexes | `./data:/app/data` |
-| `data/mongo/` | MongoDB engine files (raw docs, read by id) | `./data/mongo:/data/db` |
+| `data/mongo/` | MongoDB engine files (raw docs + queries + qrels, read by id) | `./data/mongo:/data/db` |
 
 See [`../data/README.md`](../data/README.md) for backup/reset. To wipe and start over:
 

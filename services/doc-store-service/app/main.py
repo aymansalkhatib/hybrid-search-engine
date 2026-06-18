@@ -26,7 +26,11 @@ logger = logging.getLogger(settings.service_name)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.store = MongoDocStore(
-        settings.mongo_url, settings.mongo_db, settings.mongo_docs_collection
+        settings.mongo_url,
+        settings.mongo_db,
+        settings.mongo_docs_collection,
+        settings.mongo_queries_collection,
+        settings.mongo_qrels_collection,
     )
     # Best-effort index creation; don't crash startup if Mongo isn't ready yet
     # (compose may start both at once — endpoints handle Mongo-down with 503).
