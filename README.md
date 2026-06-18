@@ -41,17 +41,23 @@ The data layer is **dataset-agnostic**: changing a dataset is a single value in 
 
 Microservices (FastAPI) behind an **API Gateway**, with a **Streamlit** UI.
 
-| Service | Port | Responsibility |
-|---------|------|----------------|
-| api-gateway | 8000 | Single entry point / orchestration |
-| preprocessing-service | 8001 | Normalize, tokenize, stem, lemmatize |
-| indexing-service | 8002 | Inverted index |
-| representation-service | 8003 | TF-IDF / embeddings / BM25 |
-| retrieval-service | 8004 | Matching, ranking, hybrid + fusion |
-| query-refinement-service | 8005 | Correction, expansion, suggestion |
-| evaluation-service | 8006 | MAP / Recall / P@10 / nDCG |
-| doc-store-service | 8007 | Docs + queries + qrels in MongoDB, read by ID |
-| ui | 8501 | Streamlit web UI |
+**The API Gateway is the single external door (§4):** every functional service is
+**internal-only** (compose network) and reached **through the gateway at `:8000`** under a
+per-service prefix. Only three containers publish a host port — the gateway, the dev/QA
+**Verification Console** (`:8090`), and **mongo-express** (`:8081`).
+
+| Service | Port | Reached via | Responsibility |
+|---------|------|-------------|----------------|
+| api-gateway | 8000 | **published** | Single external entry point / orchestration |
+| preprocessing-service | 8001 | `:8000/preprocessing` | Normalize, tokenize, stem, lemmatize |
+| indexing-service | 8002 | `:8000/indexing` | Inverted index |
+| representation-service | 8003 | `:8000/representation` | TF-IDF / embeddings / BM25 / hybrid + search |
+| retrieval-service | 8004 | _(planned)_ | Matching, ranking, hybrid + fusion |
+| query-refinement-service | 8005 | _(planned)_ | Correction, expansion, suggestion |
+| evaluation-service | 8006 | _(planned)_ | MAP / Recall / P@10 / nDCG |
+| doc-store-service | 8007 | `:8000/docstore` + `/catalog`, `/datasets/*` | Docs + queries + qrels in MongoDB, read by ID |
+| dashboard-service | 8090 | **published** | Dev/QA Verification Console (proxies every service) |
+| ui | 8501 | _(planned)_ | Streamlit web UI |
 
 ## Tech stack
 

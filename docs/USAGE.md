@@ -4,8 +4,14 @@ This guide explains **every service that exists today** and how to drive it, wit
 examples and the actual responses you should see. It grows as new services land
 (representations, retrieval, UI come later).
 
-> **Implemented now:** `preprocessing-service`, `indexing-service`, `doc-store-service`
-> (+ MongoDB) and the `api-gateway` (now with a **dataset catalog** + thin action proxies).
+> **Implemented now:** `preprocessing-service`, `indexing-service`, `representation-service`,
+> `doc-store-service` (+ MongoDB) and the `api-gateway`.
+>
+> **Single external door (§4):** the functional services are **internal-only** (not published
+> to the host) — you reach **all** of them **through the gateway at `:8000`**, under a
+> per-service path prefix (`/preprocessing`, `/indexing`, `/representation`, `/docstore`) plus
+> the dataset `/catalog` + lifecycle routes. The only other published ports are the dev/QA
+> **Verification Console** (`:8090`) and **mongo-express** (`:8081`).
 
 ---
 
@@ -37,22 +43,37 @@ What you can already do today: **see a dataset catalog**, **download a dataset (
 
 ```bash
 cp .env.example .env          # one-time: configure datasets, ports, models
-docker compose up -d api-gateway preprocessing-service indexing-service doc-store-service doc-store-db
+docker compose up -d          # bring up the whole system (gateway + services + DB + console)
 docker compose ps             # all should be "healthy"/"running"
 ```
+
+You only ever talk to **`localhost:8000`** (the gateway). The dev/QA console is at
+**`localhost:8090`**.
 
 Run the **whole** system with `docker compose up`, or a **single** service with
 `docker compose up <service>`.
 
-| Service | Port | Swagger UI | Purpose |
-|---------|------|-----------|---------|
-| api-gateway | 8000 | http://localhost:8000/docs | single entry point — **catalog** + action proxies |
-| preprocessing-service | 8001 | http://localhost:8001/docs | normalize/tokenize text |
-| indexing-service | 8002 | http://localhost:8002/docs | inverted index (postings, df, doc lengths) |
-| doc-store-service | 8007 | http://localhost:8007/docs | **raw** docs in MongoDB, read by id |
-| doc-store-db (MongoDB) | 27017 | — | document database (engine) |
+Only **three** containers publish a host port (see [`../docker-compose.yml`](../docker-compose.yml)):
 
-Every service answers `GET /health` and `GET /` (info).
+| Published | Port | Open | Purpose |
+|-----------|------|------|---------|
+| api-gateway | 8000 | http://localhost:8000/docs | **single external door** — every service route lives here |
+| dashboard (Verification Console) | 8090 | http://localhost:8090 | dev/QA console; reverse-proxies every service for independent testing |
+| mongo-express | 8081 | http://localhost:8081 | MongoDB admin UI |
+
+Everything else is **internal-only** (compose network) — reach it through the gateway:
+
+| Internal service | Container addr | Reach via gateway |
+|------------------|----------------|-------------------|
+| preprocessing-service | `preprocessing-service:8001` | `:8000/preprocessing/*` |
+| indexing-service | `indexing-service:8002` | `:8000/indexing/*` |
+| representation-service | `representation-service:8003` | `:8000/representation/*` |
+| doc-store-service | `doc-store-service:8007` | `:8000/docstore/*` + `/catalog`, `/datasets/*` |
+| doc-store-db (MongoDB) | `doc-store-db:27017` | browse via mongo-express |
+
+The gateway's Swagger at **http://localhost:8000/docs** documents (and validates) the whole
+system, grouped by service tag. Every service still answers `GET /health` and `GET /` (info)
+on the compose network; the console surfaces those.
 
 > **PowerShell note:** in PowerShell `curl` is an alias for `Invoke-WebRequest`. Use
 > **`curl.exe`** for the examples below, or use `Invoke-RestMethod` (shown where it helps).
@@ -87,8 +108,8 @@ curl -s localhost:8000/jobs/docstore/a1b2c3…     # build jobs live under .../i
 ## 4. End‑to‑end walkthrough (Dataset A = Quora)
 
 A dataset is referenced by its **id** — a value from the `DATASETS` catalog in `.env` (the first
-entry is the primary/required one). The examples below use `beir/quora/test` and go through the
-gateway at **:8000** (each service is also reachable directly — ports above).
+entry is the primary/required one). The examples below use `beir/quora/test` and all go through
+the gateway at **:8000** — the functional services aren't reachable from the host directly.
 
 ### Step 0 — See the catalog (the "options" for a UI)
 
@@ -159,19 +180,19 @@ curl -s -X POST localhost:8000/datasets/index \
 # -> JobRef; poll localhost:8000/jobs/indexing/<id> -> "succeeded" {"stats":{...}}
 ```
 
-### Step 4 — Inspect / query the index (direct to indexing :8002)
+### Step 4 — Inspect / query the index (via the gateway → indexing)
 
 ```bash
-curl -s "localhost:8002/index/status?dataset=beir/quora/test"   # {built, stats, active_job} — live progress
-curl -s "localhost:8002/stats?dataset=beir/quora/test"
-curl -s "localhost:8002/term?dataset=beir/quora/test&term=india"      # -> {"term":"india","df":13,"cf":13}
-curl -s "localhost:8002/postings?dataset=beir/quora/test&term=best&limit=5"
+curl -s "localhost:8000/indexing/status?dataset=beir/quora/test"   # {built, stats, active_job} — live progress
+curl -s "localhost:8000/indexing/stats?dataset=beir/quora/test"
+curl -s "localhost:8000/indexing/term?dataset=beir/quora/test&term=india"      # -> {"term":"india","df":13,"cf":13}
+curl -s "localhost:8000/indexing/postings?dataset=beir/quora/test&term=best&limit=5"
 ```
 
 ### Step 5 — Fetch the ORIGINAL document by id (what the UI will show)
 
 ```bash
-curl -s "localhost:8007/doc?dataset=beir/quora/test&doc_id=1"
+curl -s "localhost:8000/docstore/doc?dataset=beir/quora/test&doc_id=1"
 # -> {"doc_id":"1","text":"What is the step by step guide to invest in share market in india?"}
 ```
 
@@ -195,7 +216,7 @@ Every `limit`/range above is just for **fast smoke tests** — **omit them to pr
 |------|------|
 | **Download once (internet)** | `POST /datasets/download {"dataset":"beir/quora/test"}` → fetch all ~522,931 Quora docs |
 | **Full ingest to Mongo** (offline) | `POST /datasets/ingest {"dataset":"beir/quora/test"}` |
-| **Verify it's complete** | `GET :8007/dataset/status?dataset=beir/quora/test&with_total=true` → `{"downloaded":true,"ingested_count":522931,"doc_count":522931,"fully_ingested":true}` |
+| **Verify it's complete** | `GET :8000/datasets/status?dataset=beir/quora/test&with_total=true` → `{"downloaded":true,"ingested_count":522931,"doc_count":522931,"fully_ingested":true}` |
 | **Full inverted index** (offline) | `POST /datasets/index {"dataset":"beir/quora/test"}` → preprocesses the **entire** corpus (**slow** — tens of minutes) |
 | **Index a slice only** | `POST /datasets/index {"dataset":"beir/quora/test","start":0,"stop":50000}` |
 | Quick smoke | add `"limit":500` to ingest/index |
@@ -210,25 +231,32 @@ everything lives under `data/`: corpus in `data/dataset/`, raw docs in `data/mon
 
 ## 5. Service reference
 
-### 5.1 `preprocessing-service` (:8001) — normalize text
+### 5.1 `preprocessing-service` — normalize text (via `:8000/preprocessing`)
 
 The **same** normalization is applied to documents (at index time) and to queries (at search
 time) so they stay comparable. Pipeline: fold accents → lowercase → tokenize → drop stopwords
 → lemmatize (or stem).
 
 ```bash
-curl -s -X POST localhost:8001/preprocess \
+curl -s -X POST localhost:8000/preprocessing \
   -H "Content-Type: application/json" \
   -d '{"text":"The studies on investing in India!"}'
 # -> {"tokens":["study","invest","india"],"normalized_text":"study invest india"}
 ```
 
-- `POST /preprocess` — one text → `{tokens, normalized_text}`.
-- `POST /preprocess/batch` — `{texts:[...]}` → one result per text (used to preprocess a corpus).
+- `POST /preprocessing` — one text → `{tokens, normalized_text}`.
+- `POST /preprocessing/batch` — `{texts:[...]}` → one result per text (used to preprocess a corpus).
 - Options (all optional, sensible defaults): `lowercase`, `remove_stopwords`, `stem`,
   `lemmatize`, `min_token_length`.
 
-### 5.2 `doc-store-service` (:8007) — the dataset's facts in MongoDB
+### 5.2 `doc-store-service` — the dataset's facts in MongoDB (reads via `:8000/docstore`)
+
+> Reach the **reads** below through the gateway under `/docstore` (e.g. `GET /docstore/doc`,
+> `POST /docstore/docs`, `GET /docstore/queries`). The offline **write** flow
+> (`download`/`prepare`/`delete`) is driven through the gateway's lifecycle routes
+> (`/datasets/download` · `/datasets/ingest` · `/datasets`) — see §5.4. The raw paths shown in
+> the table are the service's own (compose-network) endpoints that the gateway forwards to.
+
 
 Owns the dataset's persisted ground truth in **three collections**, each keyed by `dataset`:
 `documents` (the **raw/original** text, keyed by `doc_id`), `queries` (test queries, keyed by
@@ -256,7 +284,7 @@ directly.
 | `GET /qrels/all?dataset=…` | the full qrels as `{query_id:{doc_id:relevance}}` — the shape `ranx`/`pytrec_eval` consume |
 
 ```bash
-curl -s -X POST localhost:8007/docs \
+curl -s -X POST localhost:8000/docstore/docs \
   -H "Content-Type: application/json" \
   -d '{"dataset":"beir/quora/test","doc_ids":["1","39","999999"]}'
 # -> {"docs":[{"doc_id":"1","text":"What is the step ..."}, ...],"missing":["999999"]}
@@ -265,11 +293,12 @@ curl -s -X POST localhost:8007/docs \
 > **Why async download / ingest?** They can take minutes on 200K+ docs. Returning a job (instead
 > of blocking the HTTP call) lets a UI show a real progress bar and keeps the API responsive.
 
-### 5.3 `indexing-service` (:8002) — inverted index
+### 5.3 `indexing-service` — inverted index (via `:8000/indexing`)
 
 Builds and serves the inverted index: per‑term **postings** with term frequency, plus per‑doc
 **lengths** and the corpus **average length** (`avgdl`) — exactly what BM25/TF‑IDF need. It
-does **not** store raw text (that's the doc‑store).
+does **not** store raw text (that's the doc‑store). Reach it at `:8000/indexing/*` (e.g.
+`/indexing/stats`, `/indexing/postings`); the raw paths in the table are what the gateway forwards to.
 
 | Endpoint | What it does |
 |----------|--------------|
@@ -287,19 +316,35 @@ does **not** store raw text (that's the doc‑store).
 > queries automatically later. **Range ordering** is the dataset's native, stable order (by
 > position) — not a date sort (most datasets, Quora included, have no date field).
 
-### 5.4 `api-gateway` (:8000) — single entry point
+### 5.4 `api-gateway` (:8000) — the single external door
+
+The gateway groups its routes by concern. **Catalog + lifecycle** are cross-service product
+flows; the **per-service prefixes** mirror each internal service's own API (reusing its
+contracts, so the gateway's Swagger validates them).
+
+**Catalog & lifecycle (the dataset flow):**
 
 | Endpoint | What it does |
 |----------|--------------|
 | `GET /catalog` | the dataset **options** + live status (download/ingest/index) for **only** the `DATASETS` in `.env` (never the internet) — what a UI renders |
 | `GET /datasets/info?dataset=<id>` | dataset details (size, qrels) for preview **before download** — network‑free |
+| `GET /datasets/status?dataset=<id>&with_total=` | one dataset's readiness; `with_total=true` adds `fully_ingested` |
 | `GET /datasets/docs?dataset=<id>&offset=&limit=` | **browse** the stored corpus by page (UI database viewer) |
-| `POST /datasets/download` · `/ingest` · `/index` | thin proxies that start the offline jobs (body carries `{dataset, …}`) and return a `JobStatus` |
-| `DELETE /datasets?dataset=&files=&docs=` | proxy to the doc‑store delete |
-| `GET /jobs/{service}/{job_id}` | poll a job; `service` = `docstore` or `indexing` |
+| `POST /datasets/download` · `/ingest` · `/index` | start the offline jobs (body `{dataset, …}`) → `JobStatus`. `ingest --force` also clears the now-stale index |
+| `DELETE /datasets?dataset=&files=&docs=&index=` | remove a dataset's files + Mongo docs + built index (best-effort) |
+| `GET /jobs/{service}/{job_id}` | poll a lifecycle job; `service` = `docstore` or `indexing` |
 
-Routing the query‑time services (retrieval, evaluation, …) through the gateway is added in later
-phases.
+**Per-service passthrough (mirror each service's API):**
+
+| Prefix | Routes (examples) |
+|--------|-------------------|
+| `/preprocessing` | `POST /preprocessing`, `POST /preprocessing/batch` |
+| `/indexing` | `POST /indexing/build`, `GET /indexing/{status,stats,postings,term,doc,built,jobs}`, `DELETE /indexing/index` |
+| `/representation` | `POST /representation/{build,search,encode}`, `GET /representation/{status,built,stats,jobs}`, `DELETE /representation` |
+| `/docstore` | `GET /docstore/doc`, `POST /docstore/docs`, `GET /docstore/{docs/list,queries,query,qrels,qrels/list,qrels/all}` |
+
+Query-time services not yet built (retrieval, query-refinement, evaluation) get their own
+prefixes when they land — same pattern, no change for callers.
 
 ---
 
@@ -333,9 +378,12 @@ To drop **one** dataset only, use `DELETE /datasets?dataset=<id>` (or delete jus
 - **Run standalone:** `docker compose up doc-store-service` (each service starts on its own;
   it degrades gracefully when a dependency is missing).
 - **Logs:** `docker compose logs -f indexing-service`.
-- **A `localhost:<port>` call hangs but the service is healthy?** An IPv6/`localhost` quirk in
-  Docker Desktop's port proxy. Use `127.0.0.1:<port>` instead, or restart Docker Desktop once.
+- **A `localhost:8000` call hangs but the gateway is healthy?** An IPv6/`localhost` quirk in
+  Docker Desktop's port proxy. Use `127.0.0.1:8000` instead, or restart Docker Desktop once.
   Container‑to‑container traffic is unaffected, so jobs keep running.
+- **`Connection refused` on `:8001`/`:8002`/`:8003`/`:8007`/`:27017`?** That's expected — the
+  functional services and MongoDB are **internal-only** now. Go through the gateway (`:8000/...`),
+  or use the Verification Console (`:8090`) which proxies them over the compose network.
 - **Common responses:**
   - A **job** with `state:"failed"` → see its `error` field (e.g. preprocessing down mid‑build).
   - `503` from `/build` → the doc‑store or preprocessing‑service is down (a build needs both).

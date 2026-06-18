@@ -23,7 +23,8 @@ class ServiceEntry:
     group: str               # built | planned | infra
     tier: str                # gateway | pipeline | query | infra
     url: Optional[str]       # internal proxy target; None ⇒ browser-link only
-    port: int                # host-published port (Swagger / admin UI links)
+    port: int                # the service's port (internal, or host-published if external)
+    external: bool = False   # True ⇒ published to the host (deep-link directly to :port)
 
     def public(self) -> dict:
         """Browser-safe view (never leaks the internal compose URL)."""
@@ -35,6 +36,9 @@ class ServiceEntry:
             "tier": self.tier,
             "port": self.port,
             "proxied": self.url is not None,
+            # Internal services aren't reachable on the host — the front-end deep-links
+            # their Swagger through the gateway's grouped docs instead of :port.
+            "external": self.external,
         }
 
 
@@ -44,7 +48,8 @@ def build_registry(settings) -> list[ServiceEntry]:
     return [
         ServiceEntry("gateway", "API Gateway",
                      "Single entry point — the product UI talks only here",
-                     "built", "gateway", s.api_gateway_url, s.api_gateway_port),
+                     "built", "gateway", s.api_gateway_url, s.api_gateway_port,
+                     external=True),
         ServiceEntry("preprocessing", "Preprocessing",
                      "Normalize · tokenize · stopwords · stem · lemmatize",
                      "built", "pipeline", s.preprocessing_url, s.preprocessing_port),
@@ -68,5 +73,6 @@ def build_registry(settings) -> list[ServiceEntry]:
                      "planned", "query", s.evaluation_url, s.evaluation_port),
         ServiceEntry("mongo-express", "Mongo Express",
                      "Browse the document database (admin UI)",
-                     "infra", "infra", None, s.mongo_express_port),
+                     "infra", "infra", None, s.mongo_express_port,
+                     external=True),
     ]

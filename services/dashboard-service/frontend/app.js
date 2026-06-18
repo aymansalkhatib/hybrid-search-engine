@@ -867,6 +867,9 @@ function renderServicesSkeleton() {
 
 function renderServices() {
   const host = window.location.hostname;
+  // Internal services aren't reachable on the host; deep-link their Swagger through
+  // the gateway's grouped docs (tag === service key). The gateway itself IS published.
+  const gwPort = (state.meta.services.find((x) => x.key === "gateway") || {}).port || 8000;
   state.meta.services.forEach((s) => {
     const card = $(`#svc-${cssId(s.key)}`);
     if (!card) return;
@@ -876,8 +879,18 @@ function renderServices() {
     const stateCls = isInfra ? "state-planned" : isUp ? "state-up" : (s.group === "planned" ? "state-planned" : "state-down");
     const stateTxt = isInfra ? "infra" : isUp ? "online" : (s.group === "planned" ? "planned" : "offline");
     card.className = `svc ${isUp ? "up" : isInfra ? "" : "down"}`;
-    const docsLink = `http://${host}:${s.port}/docs`;
-    const homeLink = `http://${host}:${s.port}/`;
+    // External (published) nodes link straight to their own port; internal services
+    // are only reachable via the gateway, so their Swagger opens the gateway's docs
+    // anchored at this service's tag.
+    let links;
+    if (isInfra) {
+      links = `<a href="http://${host}:${s.port}/" target="_blank" class="btn btn-primary btn-sm">Open admin UI ↗</a>`;
+    } else if (s.external) {
+      links = `<a href="http://${host}:${s.port}/docs" target="_blank" class="btn btn-ghost btn-sm">Swagger ↗</a>
+               <a href="http://${host}:${s.port}/" target="_blank" class="btn btn-ghost btn-sm">Info ↗</a>`;
+    } else {
+      links = `<a href="http://${host}:${gwPort}/docs#/${s.key}" target="_blank" class="btn btn-ghost btn-sm">Swagger (gateway) ↗</a>`;
+    }
     card.innerHTML = `
       <div class="svc-top">
         <span class="svc-dot"></span>
@@ -886,12 +899,7 @@ function renderServices() {
       </div>
       <div class="svc-role">${esc(s.role)}</div>
       <div class="svc-meta"><span>${esc(s.key)}</span><span>·</span><span>:${s.port}</span></div>
-      <div class="svc-links">
-        ${isInfra
-          ? `<a href="${homeLink}" target="_blank" class="btn btn-primary btn-sm">Open admin UI ↗</a>`
-          : `<a href="${docsLink}" target="_blank" class="btn btn-ghost btn-sm">Swagger ↗</a>
-             <a href="${homeLink}" target="_blank" class="btn btn-ghost btn-sm">Info ↗</a>`}
-      </div>`;
+      <div class="svc-links">${links}</div>`;
   });
 }
 

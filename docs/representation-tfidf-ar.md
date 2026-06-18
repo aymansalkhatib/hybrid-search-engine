@@ -105,23 +105,26 @@ IDF(كلمة) = log( عدد كل المستندات / عدد المستندات 
 3. اضغط **Build representation** وتابع شريط التقدّم الحيّ.
 4. في **Inspect a query** اكتب استعلامًا واضغط *Encode & weigh* لترى أوزان المصطلحات مرئيّة.
 
-### ب) من سطر الأوامر (curl)
+### ب) من سطر الأوامر (curl) — عبر الـ API Gateway فقط
+> الخدمة **داخلية** ولا تُفتح من المضيف؛ كل الطلبات تمرّ عبر البوّابة على `:8000` تحت البادئة
+> `/representation` (المسار الفعلي للخدمة بلا بادئة كما في الجدول).
 ```bash
 # بناء (مهمة خلفية — تُرجع job ثم تتابعها)
-curl -X POST http://localhost:8003/build -H "Content-Type: application/json" \
+curl -X POST http://localhost:8000/representation/build -H "Content-Type: application/json" \
   -d '{"dataset":"beir/quora/test","model":"tfidf","params":{"min_df":2,"sublinear_tf":true}}'
 
 # متابعة الحالة
-curl "http://localhost:8003/status?dataset=beir/quora/test&model=tfidf"
+curl "http://localhost:8000/representation/status?dataset=beir/quora/test&model=tfidf"
 
 # ترميز استعلام (المسار الآني — سريع)
-curl -X POST http://localhost:8003/encode -H "Content-Type: application/json" \
+curl -X POST http://localhost:8000/representation/encode -H "Content-Type: application/json" \
   -d '{"dataset":"beir/quora/test","model":"tfidf","texts":["how do I learn python quickly"],"top_terms":5}'
 ```
 
-| الـ endpoint | الوظيفة |
+| الـ endpoint (عبر `:8000/representation`) | الوظيفة |
 |--------------|---------|
 | `POST /build` | يبني التمثيل (offline، مهمة خلفية، آمن للتكرار) |
+| `POST /search` | المسار الآني: ترتيب الوثائق (نموذج مفرد أو hybrid) وإرجاع النص الأصلي لأعلى k |
 | `GET /status` | هل هو مبنيّ؟ + تقدّم أي بناء جارٍ |
 | `GET /stats` | إحصائيات النموذج المبنيّ |
 | `GET /built` | قائمة كل (داتاسيت، نموذج) مبنيّ |

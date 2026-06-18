@@ -1,5 +1,11 @@
 name: ir-project
 
+# Port policy (§4): only THREE containers publish a host port —
+#   • api-gateway   (:8000)  the single external door for the product/API
+#   • dashboard     (:8090)  dev/QA Verification Console (documented exception)
+#   • mongo-express (:8081)  DB admin UI (documented exception)
+# Every functional service + MongoDB is internal-only (``expose`` = compose network
+# only); reach them through the gateway, or the console's reverse proxy.
 services:
   api-gateway:
     build:
@@ -10,6 +16,7 @@ services:
     env_file:
       - path: .env
         required: true
+    # The ONLY product-facing port — the single external entry point.
     ports:
       - "${API_GATEWAY_PORT:-8000}:8000"
     networks:
@@ -25,8 +32,10 @@ services:
     env_file:
       - path: .env
         required: true
-    ports:
-      - "${PREPROCESSING_PORT:-8001}:8001"
+    # Internal-only: reachable on the compose network at preprocessing-service:8001.
+    # Not published to the host — the API Gateway is the single external door (§4).
+    expose:
+      - "8001"
     networks:
       - ir-net
     restart: unless-stopped
@@ -40,8 +49,10 @@ services:
     env_file:
       - path: .env
         required: true
-    ports:
-      - "${INDEXING_PORT:-8002}:8002"
+    # Internal-only: reachable on the compose network at indexing-service:8002.
+    # Not published to the host — the API Gateway is the single external door (§4).
+    expose:
+      - "8002"
     # Heavy artifacts (inverted index) persist on the host volume.
     volumes:
       - ./data:/app/data
@@ -61,8 +72,10 @@ services:
     env_file:
       - path: .env
         required: true
-    ports:
-      - "${REPRESENTATION_PORT:-8003}:8003"
+    # Internal-only: reachable on the compose network at representation-service:8003.
+    # Not published to the host — the API Gateway is the single external door (§4).
+    expose:
+      - "8003"
     # Heavy artifacts (TF-IDF matrix + fitted model) persist on the host volume.
     volumes:
       - ./data:/app/data
@@ -84,8 +97,10 @@ services:
     # named volume — the raw docs are re-ingestable via /dataset/prepare anyway.
     volumes:
       - ./data/mongo:/data/db
-    ports:
-      - "${MONGO_PORT:-27017}:27017"
+    # Internal-only: reachable on the compose network at doc-store-db:27017. Not
+    # published to the host — browse it via mongo-express, or the gateway/doc-store API.
+    expose:
+      - "27017"
     networks:
       - ir-net
     restart: unless-stopped
@@ -99,8 +114,10 @@ services:
     env_file:
       - path: .env
         required: true
-    ports:
-      - "${DOC_STORE_PORT:-8007}:8007"
+    # Internal-only: reachable on the compose network at doc-store-service:8007.
+    # Not published to the host — the API Gateway is the single external door (§4).
+    expose:
+      - "8007"
     # Reads the shared ir-datasets cache (./data) as the raw-text source for ingest.
     volumes:
       - ./data:/app/data
