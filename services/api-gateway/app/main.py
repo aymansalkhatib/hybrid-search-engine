@@ -6,10 +6,11 @@ only through here. Responsibilities are split one-file-per-concern under ``route
 
 * ``catalog``        — dataset options + live status the UI renders.
 * ``lifecycle``      — the offline flow (download → ingest → index) + job polling.
-* ``preprocessing`` / ``indexing`` / ``representation`` / ``retrieval`` / ``docstore`` —
-  passthrough to each service's own API (under a ``/<service>`` prefix), reusing
-  ``shared.contracts`` so the gateway's Swagger documents and validates the whole system.
-  ``retrieval`` is the online query path (``/retrieval/search``).
+* ``preprocessing`` / ``indexing`` / ``representation`` / ``retrieval`` / ``evaluation`` /
+  ``docstore`` — passthrough to each service's own API (under a ``/<service>`` prefix),
+  reusing ``shared.contracts`` so the gateway's Swagger documents and validates the whole
+  system. ``retrieval`` is the online query path (``/retrieval/search``); ``evaluation``
+  measures MAP/nDCG/Recall/P@10 per model.
 
 This module just wires the app: open keep-alive clients to each downstream service,
 mount the routers, and expose ``/health`` + ``/``.
@@ -27,6 +28,7 @@ from app.config import settings
 from app.routers import (
     catalog,
     docstore,
+    evaluation,
     indexing,
     lifecycle,
     preprocessing,
@@ -47,11 +49,13 @@ async def lifespan(app: FastAPI):
     app.state.indexing = ServiceClient(settings.indexing_url)
     app.state.representation = ServiceClient(settings.representation_url)
     app.state.retrieval = ServiceClient(settings.retrieval_url)
+    app.state.evaluation = ServiceClient(settings.evaluation_url)
     app.state.doc_store = ServiceClient(settings.doc_store_url)
     logger.info("%s v%s started", settings.service_name, settings.version)
     yield
     for client in (app.state.preprocessing, app.state.indexing,
-                   app.state.representation, app.state.retrieval, app.state.doc_store):
+                   app.state.representation, app.state.retrieval,
+                   app.state.evaluation, app.state.doc_store):
         client.close()
     logger.info("%s shutting down", settings.service_name)
 
@@ -71,6 +75,7 @@ app.include_router(preprocessing.router)
 app.include_router(indexing.router)
 app.include_router(representation.router)
 app.include_router(retrieval.router)
+app.include_router(evaluation.router)
 app.include_router(docstore.router)
 
 

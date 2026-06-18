@@ -114,6 +114,32 @@ services:
       - ir-net
     restart: unless-stopped
 
+  evaluation-service:
+    build:
+      context: .
+      dockerfile: services/evaluation-service/Dockerfile
+    image: ir-project/evaluation-service
+    container_name: ir-evaluation
+    env_file:
+      - path: .env
+        required: true
+    # Internal-only: reachable on the compose network at evaluation-service:8006.
+    # Not published to the host — the API Gateway is the single external door (§4).
+    expose:
+      - "8006"
+    # Persists evaluation reports (JSON + CSV) under the data volume so they survive
+    # restarts and feed the report's charts (data/artifacts/eval).
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      retrieval-service:        # runs the test queries being evaluated
+        condition: service_healthy
+      doc-store-service:        # source of the test queries & qrels (ground truth)
+        condition: service_healthy
+    networks:
+      - ir-net
+    restart: unless-stopped
+
   doc-store-db:
     image: mongo:7
     container_name: ir-doc-store-db
@@ -206,6 +232,7 @@ services:
       - indexing-service
       - representation-service
       - retrieval-service
+      - evaluation-service
       - doc-store-service
     networks:
       - ir-net

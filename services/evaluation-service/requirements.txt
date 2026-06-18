@@ -1,0 +1,12 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+httpx==0.28.1
+
+# Metric engine: ranx computes MAP/nDCG/Recall/P@k from the qrels + run
+# shapes the system already produces. It pulls numba/numpy; numpy is pinned <2 for numba
+# compatibility (matches the representation-service pin). If ranx is ever unavailable, the
+# service falls back to its built-in metric implementation (app/domain/metrics.py).
+numpy==1.26.4
+ranx==0.3.20
