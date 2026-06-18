@@ -71,6 +71,12 @@ from shared.contracts.retrieval import (
     SearchRequest,
     SearchResponse,
 )
+from shared.contracts.refinement import (
+    RefineOptions,
+    RefineRequest,
+    RefineResponse,
+    TermCorrection,
+)
 from shared.contracts.evaluation import (
     DEFAULT_METRICS,
     EvalModel,
@@ -161,6 +167,10 @@ __all__ = [
     "SearchHit",
     "SearchRequest",
     "SearchResponse",
+    "RefineOptions",
+    "RefineRequest",
+    "RefineResponse",
+    "TermCorrection",
     "DEFAULT_METRICS",
     "EvalModel",
     "EvalRunSpec",

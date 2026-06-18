@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.adapters.doc_store_client import DocStoreClient
+from app.adapters.refinement_client import RefinementClient
 from app.adapters.report_store import ReportStore
 from app.adapters.retrieval_client import RetrievalClient
 from app.api.routes import router
@@ -40,6 +41,8 @@ async def lifespan(app: FastAPI):
     # model load on the first query of a run.
     app.state.retrieval = RetrievalClient(settings.retrieval_url, timeout=settings.search_timeout)
     app.state.doc_store = DocStoreClient(settings.doc_store_url)
+    # Used only when an evaluation requests query refinement (with/without comparison).
+    app.state.refinement = RefinementClient(settings.query_refinement_url)
     app.state.store = ReportStore(settings.reports_dir)
     # Long offline evaluations run as background jobs (one active per dataset+label).
     app.state.jobs = JobRegistry()
@@ -51,6 +54,7 @@ async def lifespan(app: FastAPI):
     yield
     app.state.retrieval.close()
     app.state.doc_store.close()
+    app.state.refinement.close()
     logger.info("%s shutting down", settings.service_name)
 
 

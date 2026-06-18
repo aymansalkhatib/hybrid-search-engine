@@ -82,6 +82,10 @@
           <svg viewBox="0 0 24 24" class="ico"><path d="M3 3v18h18M7 14l3-3 3 3 5-6"/></svg>
           <span>Representations</span>
         </button>
+        <button class="nav-item" data-view="refine">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M3 7h18M6 12h12M10 17h4"/><circle cx="19" cy="17" r="2"/></svg>
+          <span>Refinement</span>
+        </button>
         <button class="nav-item" data-view="search">
           <svg viewBox="0 0 24 24" class="ico"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <span>Search</span>
@@ -364,6 +368,49 @@
       </section>
 
       <!-- ===== SEARCH ===== -->
+      <!-- ===== QUERY REFINEMENT ===== -->
+      <section class="view" data-view="refine">
+        <div class="view-head">
+          <div>
+            <h1>Query Refinement</h1>
+            <p class="sub">Refine a raw query <b>before</b> retrieval — spell-correction (SymSpell) + optional synonym expansion (WordNet). Full control over every option this service exposes.</p>
+          </div>
+        </div>
+        <div class="split">
+          <div class="panel">
+            <div class="panel-head"><h2>Query</h2></div>
+            <textarea id="rfText" class="textarea" rows="3" placeholder="Type a raw / misspelled query…">infromation retreival systm</textarea>
+            <div class="opts">
+              <label class="switch"><input type="checkbox" id="rfCorrect" checked><span></span>correct spelling</label>
+              <label class="switch"><input type="checkbox" id="rfExpand"><span></span>expand synonyms</label>
+              <label class="switch"><input type="checkbox" id="rfProtect" checked><span></span>protect names / acronyms</label>
+              <label class="num">max synonyms / term
+                <input type="number" id="rfMaxSyn" class="input-num" value="2" min="0" max="10">
+              </label>
+              <label class="num">max edit distance
+                <input type="number" id="rfMaxEdit" class="input-num" value="2" min="1" max="2">
+              </label>
+            </div>
+            <div class="btn-row">
+              <button class="btn btn-primary" id="rfRun">
+                <svg viewBox="0 0 24 24" class="ico"><path d="M3 7h18M6 12h12M10 17h4"/></svg> Refine
+              </button>
+              <button class="btn btn-ghost" id="rfToSearch" title="Send the refined query to the Search tab" disabled>
+                <svg viewBox="0 0 24 24" class="ico"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg> Search with refined
+              </button>
+            </div>
+            <p class="hint">Refinement runs on the <b>raw</b> query (before normalization), so a misspelling like <span class="mono">infromation</span> is corrected before it reaches the index. Synonym expansion broadens recall but can hurt precision — that's why it's off by default and evaluated before/after.</p>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Result</h2>
+              <span class="badge" id="rfApplied" hidden></span>
+            </div>
+            <div id="rfOut" class="result-empty">Refine a query to see corrections, added terms &amp; suggestions here.</div>
+          </div>
+        </div>
+      </section>
+
       <section class="view" data-view="search">
         <div class="view-head">
           <div>
@@ -378,6 +425,14 @@
             <button class="btn btn-primary" id="seRun">
               <svg viewBox="0 0 24 24" class="ico"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg> Search
             </button>
+          </div>
+
+          <div class="opt-row">
+            <span class="opt-label">Refine</span>
+            <label class="switch sm"><input type="checkbox" id="seRefine"><span></span>refine query first</label>
+            <label class="switch sm"><input type="checkbox" id="seRefCorrect" checked><span></span>correct</label>
+            <label class="switch sm"><input type="checkbox" id="seRefExpand"><span></span>expand synonyms</label>
+            <span class="opt-note">runs query-refinement before retrieval — toggle to compare results <b>with vs without</b> refinement</span>
           </div>
 
           <div class="opt-row">
@@ -438,6 +493,7 @@
             </div>
           </div>
 
+          <div id="seRefineNote" class="enc-meta" hidden></div>
           <div id="seMeta" class="enc-meta" hidden></div>
           <div id="seResults" class="result-empty">Run a search to see ranked documents with their original text.</div>
         </div>
@@ -519,6 +575,14 @@
             <label class="opt-field">max queries <input type="number" class="input-num" id="evMaxQ" placeholder="all" min="1"></label>
             <label class="switch sm"><input type="checkbox" id="evDepthToggle"><span></span>Depth sweep (nDCG@k · Recall@k)</label>
             <label class="switch sm"><input type="checkbox" id="evForce"><span></span>Force</label>
+          </div>
+
+          <div class="opt-row">
+            <span class="opt-label">Refine</span>
+            <label class="switch sm"><input type="checkbox" id="evRefine"><span></span>refine queries first</label>
+            <label class="switch sm"><input type="checkbox" id="evRefCorrect" checked><span></span>correct</label>
+            <label class="switch sm"><input type="checkbox" id="evRefExpand"><span></span>expand synonyms</label>
+            <span class="opt-note">runs each test query through query-refinement before retrieval — give it a distinct <b>label</b> (e.g. <span class="mono">with-refinement</span>) and <b>compare</b> it to <span class="mono">baseline</span> for the before/after Δ in MAP/nDCG</span>
           </div>
 
           <div class="opt-row">

@@ -20,6 +20,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from shared.contracts.refinement import RefineOptions
 from shared.contracts.retrieval import HybridSpec
 
 # The models retrieval can rank with (mirrors SearchRequest.model).
@@ -76,6 +77,15 @@ class EvaluateRequest(BaseModel):
     per_query: bool = Field(
         default=True,
         description="Also compute & persist per-query scores (a sidecar) for best/worst & win-loss drill-down",
+    )
+    refine: Optional[RefineOptions] = Field(
+        default=None,
+        description=(
+            "Query-refinement applied to every test query before retrieval (spell-correct / "
+            "expand). None = no refinement (the 'before' baseline). Set it to measure the "
+            "'after' effect — run the same models with a different label (e.g. 'with-refinement') "
+            "and compare reports. Refinement is applied once per query and shared across all runs."
+        ),
     )
     force: bool = Field(default=False, description="Re-run and overwrite even if a report with this label exists")
 

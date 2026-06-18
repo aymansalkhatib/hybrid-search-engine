@@ -85,6 +85,10 @@ class ReportStore:
         """Cheap metadata for every persisted report (newest first)."""
         out: list[ReportSummary] = []
         for path in self.dir.glob("*.json"):
+            # Skip the per-query sidecars (``*.perquery.json``) — they aren't reports, and
+            # path.stem only strips the final ``.json`` so they'd be mis-loaded and warn.
+            if path.name.endswith(".perquery.json"):
+                continue
             report = self.load(path.stem)
             if report is None:
                 continue

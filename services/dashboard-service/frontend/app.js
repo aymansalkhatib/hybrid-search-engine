@@ -20,6 +20,7 @@ const state = {
   seMode: "parallel",  // hybrid mode
   seFusion: "rrf",     // parallel fusion method
   seBoolOp: "and",     // boolean (inverted-index) operator
+  rfLast: null,        // last query-refinement response (for "search with refined")
   evReportId: null,    // evaluation report currently in view
   evCompareId: null,   // evaluation report to overlay (before/after compare)
   evReports: [],       // cached saved-reports list
@@ -797,10 +798,18 @@ function seSyncControls() {
 }
 
 async function runSearch() {
-  const query = $("#seQuery").value.trim();
+  let query = $("#seQuery").value.trim();
   const out = $("#seResults");
   if (!query) { toast("Enter a query", "err"); return; }
   const top_k = Number($("#seTopk").value) || 10;
+
+  // Optional pre-retrieval refinement (the §6 "with vs without" toggle): refine the
+  // raw query, then search with the refined one. Applies to every search mode.
+  $("#seRefineNote").hidden = true;
+  if ($("#seRefine").checked) {
+    const ref = await refineQuery(query);
+    if (ref) { query = ref.refined || query; showRefineNote(ref); }
+  }
 
   // Boolean (inverted-index-only) search: a different endpoint and payload.
   if (state.seModel === "boolean") {
@@ -910,6 +919,110 @@ function wireSearch() {
 }
 
 /* ============================================================
+   QUERY REFINEMENT  (spell-correct · expand · suggest)
+   Standalone playground + the Search-tab "refine first" toggle.
+   Talks to the query-refinement-service via the console proxy.
+   ============================================================ */
+
+// Refine a raw query using the Search-tab toggles; returns the response or null.
+async function refineQuery(text) {
+  const options = {
+    correct_spelling: $("#seRefCorrect").checked,
+    expand_synonyms: $("#seRefExpand").checked,
+    max_synonyms_per_term: 2,
+    max_edit_distance: 2,
+  };
+  const r = await api("query-refinement", "refine", { method: "POST", json: { text, options } });
+  if (!r.ok) { toast(`Refinement failed: ${errMsg(r)} — searched the raw query`, "err", 4000); return null; }
+  return r.data;
+}
+
+// Inline note above the search results summarising what refinement changed.
+function showRefineNote(ref) {
+  const el = $("#seRefineNote");
+  el.hidden = false;
+  const parts = [];
+  if (ref.corrections?.length) parts.push("corrected " + ref.corrections.map((c) => `${esc(c.original)}→${esc(c.corrected)}`).join(", "));
+  if (ref.added_terms?.length) parts.push("expanded +" + ref.added_terms.map(esc).join(", "));
+  const summary = parts.length ? parts.join(" · ") : "no change";
+  el.innerHTML = `refined → <b>${esc(ref.refined)}</b> <span class="muted">(${summary})</span>`;
+}
+
+async function runRefine() {
+  const text = $("#rfText").value.trim();
+  const out = $("#rfOut");
+  if (!text) { toast("Enter a query", "err"); return; }
+  const options = {
+    correct_spelling: $("#rfCorrect").checked,
+    expand_synonyms: $("#rfExpand").checked,
+    protect_proper_nouns: $("#rfProtect").checked,
+    max_synonyms_per_term: Number($("#rfMaxSyn").value) || 0,
+    max_edit_distance: Number($("#rfMaxEdit").value) || 2,
+  };
+  out.className = "loading"; out.innerHTML = `<span class="spinner"></span> refining…`;
+  $("#rfApplied").hidden = true;
+  const r = await api("query-refinement", "refine", { method: "POST", json: { text, options } });
+  if (!r.ok) {
+    out.className = "result-empty";
+    out.textContent = `Error: ${errMsg(r)} (is the query-refinement service up?)`;
+    $("#rfToSearch").disabled = true; state.rfLast = null;
+    return;
+  }
+  state.rfLast = r.data;
+  $("#rfToSearch").disabled = !r.data.refined;
+  renderRefineResult(r.data, out);
+}
+
+function renderRefineResult(d, out) {
+  const applied = $("#rfApplied");
+  applied.hidden = false;
+  applied.textContent = d.applied?.length ? d.applied.join(" + ") : "no change";
+
+  const corr = d.corrections?.length
+    ? `<div class="chips">${d.corrections.map((c) => `<span class="chip"><s class="muted">${esc(c.original)}</s> → ${esc(c.corrected)}</span>`).join("")}</div>`
+    : `<p class="hint">No spelling corrections.</p>`;
+  const expandedOff = !$("#rfExpand").checked;
+  const added = d.added_terms?.length
+    ? `<div class="chips">${d.added_terms.map((t) => `<span class="chip">+ ${esc(t)}</span>`).join("")}</div>`
+    : `<p class="hint">No synonyms added${expandedOff ? " (expansion off)" : ""}.</p>`;
+  const sugg = d.suggestions?.length
+    ? `<div class="chips">${d.suggestions.map((s) => `<span class="chip chip-link" data-sugg="${esc(s)}">${esc(s)}</span>`).join("")}</div>`
+    : `<p class="hint">No alternative suggestion.</p>`;
+
+  out.className = "";
+  out.innerHTML = `
+    <div class="rf-row"><span class="rf-k">original</span><div class="norm-box">${esc(d.original) || "<span style='color:var(--faint)'>(empty)</span>"}</div></div>
+    <div class="rf-row"><span class="rf-k">refined</span><div class="norm-box">${esc(d.refined) || "<span style='color:var(--faint)'>(empty)</span>"}</div></div>
+    <div class="rf-sec"><h4 class="rf-h">Corrections (did you mean)</h4>${corr}</div>
+    <div class="rf-sec"><h4 class="rf-h">Added terms (synonyms)</h4>${added}</div>
+    <div class="rf-sec"><h4 class="rf-h">Suggestions <span class="muted">— click to reuse</span></h4>${sugg}</div>`;
+}
+
+// "Search with refined" — push the refined query into the Search tab and run it.
+function refineToSearch() {
+  if (!state.rfLast?.refined) return;
+  $("#seQuery").value = state.rfLast.refined;
+  $("#seRefine").checked = false;  // already refined — don't refine twice
+  $$("#nav .nav-item").forEach((b) => b.classList.remove("active"));
+  $$(".view").forEach((v) => v.classList.remove("active"));
+  $("#nav .nav-item[data-view='search']").classList.add("active");
+  $(".view[data-view='search']").classList.add("active");
+  onViewEnter("search");
+  runSearch();
+}
+
+function wireRefine() {
+  $("#rfRun").addEventListener("click", runRefine);
+  $("#rfText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) runRefine(); });
+  $("#rfToSearch").addEventListener("click", refineToSearch);
+  // suggestion chips → reuse in the input
+  $("#rfOut").addEventListener("click", (e) => {
+    const c = e.target.closest("[data-sugg]"); if (!c) return;
+    $("#rfText").value = c.dataset.sugg;
+  });
+}
+
+/* ============================================================
    EVALUATION  (run · save · view · charts · before/after)
    Talks to the evaluation-service via the console proxy. Charts are
    pure CSS bars (metrics are 0–1) — no library, works offline.
@@ -990,9 +1103,30 @@ async function runEvaluation() {
     force: $("#evForce").checked,
   };
   if (maxQ) payload.max_queries = Number(maxQ);
+  // With/without refinement: when on, every test query is refined before retrieval, so
+  // this report is the "after" — compare it to a baseline (no refine) report.
+  if ($("#evRefine").checked) {
+    payload.refine = {
+      correct_spelling: $("#evRefCorrect").checked,
+      expand_synonyms: $("#evRefExpand").checked,
+      max_synonyms_per_term: 2,
+      max_edit_distance: 2,
+    };
+  }
 
   const r = await api("evaluation", "evaluate", { method: "POST", json: payload });
-  if (!r.ok) { toast(`evaluation failed: ${errMsg(r)}`, "err", 6000); return; }
+  if (!r.ok) {
+    // 409 with a job already in flight for this label → attach to it instead of erroring,
+    // so the user sees its live progress rather than a dead toast.
+    if (r.status === 409) {
+      const running = await evResumeRunningJob();
+      toast(running ? "An evaluation with this label is already running — showing its progress"
+                    : `evaluation: ${errMsg(r)}`, running ? "info" : "err", 5000);
+    } else {
+      toast(`evaluation failed: ${errMsg(r)}`, "err", 6000);
+    }
+    return;
+  }
   const job = r.data;
   // A fast skip (report already exists) may finish before the POST returns — handle both.
   if (["skipped", "succeeded", "failed"].includes(job.state)) { handleEvalDone(job); return; }
@@ -1037,6 +1171,17 @@ function pollEvalJob(jobId) {
     lbl.querySelector(".pct").innerHTML = det ? `${j.percent}%` : `<span class="spinner"></span>`;
     if (["succeeded", "failed", "skipped"].includes(j.state)) handleEvalDone(j);
   }, 1200);
+}
+
+// Attach the progress bar to an evaluation already running for the focused dataset —
+// one started earlier, from another tab/session, or rejected just now with a 409
+// "already in progress". So progress always shows, even if this tab didn't start it.
+async function evResumeRunningJob() {
+  const r = await api("evaluation", "jobs", { query: { dataset: state.dataset } });
+  if (!r.ok || !Array.isArray(r.data)) return null;
+  const running = r.data.find((j) => j.state === "running");
+  if (running) pollEvalJob(running.job_id);
+  return running || null;
 }
 
 // The dataset a saved report belongs to (from the cached list metadata).
@@ -1491,6 +1636,13 @@ function initEvalControls() {
 function wireEvaluation() {
   $("#evReload").addEventListener("click", loadEvalReports);
   $("#evRun").addEventListener("click", runEvaluation);
+  // Nudge the label toward a distinct one when refinement is on, so the "after" run
+  // doesn't overwrite the "baseline" report (and the two stay comparable).
+  $("#evRefine").addEventListener("change", (e) => {
+    const lbl = $("#evLabel");
+    if (e.target.checked && lbl.value.trim() === "baseline") lbl.value = "with-refinement";
+    else if (!e.target.checked && lbl.value.trim() === "with-refinement") lbl.value = "baseline";
+  });
   $("#evReports").addEventListener("click", (e) => {
     const b = e.target.closest("[data-evact]");
     if (!b) return;
@@ -1589,7 +1741,7 @@ function onViewEnter(view) {
   if (view === "index") loadIndexStats();
   if (view === "representation") loadRepresentation();
   if (view === "search") seSyncControls();
-  if (view === "evaluation") { initEvalControls(); loadEvalReports(); }
+  if (view === "evaluation") { initEvalControls(); loadEvalReports(); evResumeRunningJob(); }
   if (view === "docstore") { browseDocs(true); browseQueries(true); }
   if (view === "services") renderServices();
   if (view === "overview") renderOverview();
@@ -1625,6 +1777,9 @@ function wireActions() {
   $("#ixTerm").addEventListener("keydown", (e) => e.key === "Enter" && lookupTerm());
   $("#ixDocLookup").addEventListener("click", lookupDoc);
   $("#ixDocId").addEventListener("keydown", (e) => e.key === "Enter" && lookupDoc());
+
+  // query refinement (standalone playground)
+  wireRefine();
 
   // search
   wireSearch();

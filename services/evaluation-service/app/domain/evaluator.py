@@ -28,9 +28,10 @@ from typing import Callable, Optional
 import httpx
 
 from app.adapters.doc_store_client import DocStoreClient
+from app.adapters.refinement_client import RefinementClient
 from app.adapters.retrieval_client import RetrievalClient
 from app.domain import metrics as metric_engine
-from shared.contracts import EvalRunSpec, EvaluationReport, RunEvaluation
+from shared.contracts import EvalRunSpec, EvaluationReport, RefineOptions, RunEvaluation
 
 logger = logging.getLogger("evaluation-service")
 
@@ -79,6 +80,8 @@ def run_evaluation(
     advance: Callable[[int], None],
     set_total: Callable[[int], None],
     set_message: Callable[[str], None],
+    refine_options: Optional[RefineOptions] = None,
+    refinement: Optional[RefinementClient] = None,
 ) -> tuple[EvaluationReport, Optional[dict]]:
     """Evaluate every run config on the dataset's judged queries.
 
@@ -103,6 +106,17 @@ def run_evaluation(
         judged = judged[:max_queries]
     qrels_eval = {qid: qrels[qid] for qid in judged}
 
+    # Optional query refinement (the with/without comparison): refine each judged query
+    # ONCE here, then every run searches the refined text — so a 'with-refinement' report
+    # is the same models on a refined query set, directly comparable to the baseline. The
+    # sidecar keeps the ORIGINAL query text for display so before/after drill-downs align.
+    search_queries = queries
+    refine_params: Optional[dict] = None
+    if refine_options is not None and refinement is not None:
+        set_message(f"refining {len(judged)} queries")
+        search_queries = _refine_queries(judged, queries, refine_options, refinement, concurrency)
+        refine_params = refine_options.model_dump()
+
     set_total(max(len(judged) * len(runs), 0))
     set_message(f"evaluating {len(runs)} run(s) over {len(judged)} queries")
 
@@ -110,9 +124,10 @@ def run_evaluation(
     per_query_runs: dict[str, PerQueryScores] = {}
     for spec in runs:
         result, pq = _evaluate_one(
-            spec=spec, judged=judged, queries=queries, qrels_eval=qrels_eval,
+            spec=spec, judged=judged, queries=search_queries, qrels_eval=qrels_eval,
             metrics=metrics, top_k=top_k, dataset_id=dataset_id, retrieval=retrieval,
             concurrency=concurrency, advance=advance, per_query=per_query,
+            refine=refine_params,
         )
         run_results.append(result)
         if pq is not None:
@@ -141,6 +156,30 @@ def run_evaluation(
     return report, sidecar
 
 
+def _refine_queries(
+    judged: list[str],
+    queries: dict[str, str],
+    options: RefineOptions,
+    refinement: RefinementClient,
+    concurrency: int,
+) -> dict[str, str]:
+    """Refine every judged query once (concurrently). A blip on one query falls back to
+    its raw text, so refinement never fails the whole evaluation."""
+    def work(qid: str) -> tuple[str, str]:
+        try:
+            return qid, refinement.refine(text=queries[qid], options=options)
+        except httpx.HTTPError:
+            return qid, queries[qid]
+
+    out = dict(queries)
+    if judged:
+        workers = max(1, min(concurrency, len(judged)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for qid, text in pool.map(work, judged):
+                out[qid] = text
+    return out
+
+
 def _evaluate_one(
     *,
     spec: EvalRunSpec,
@@ -154,11 +193,14 @@ def _evaluate_one(
     concurrency: int,
     advance: Callable[[int], None],
     per_query: bool,
+    refine: Optional[dict] = None,
 ) -> tuple[RunEvaluation, Optional[PerQueryScores]]:
     """Run one model config over all judged queries and score it. Never raises for a model
     that simply isn't built — that's recorded as the run's ``error`` instead."""
     t0 = perf_counter()
     params = _run_params(spec)
+    if refine is not None:
+        params = {**params, "refine": refine}
 
     if not judged:
         return RunEvaluation(label=spec.label, model=spec.model, params=params), None

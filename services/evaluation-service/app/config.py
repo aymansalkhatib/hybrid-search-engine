@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # service, not via the gateway) and reads queries/qrels from the doc-store.
     retrieval_url: str = Field(default="http://localhost:8004", validation_alias="RETRIEVAL_URL")
     doc_store_url: str = Field(default="http://localhost:8007", validation_alias="DOC_STORE_URL")
+    # Optional — only used when an evaluation requests query refinement (with/without
+    # comparison). Defaults to localhost so the service still runs standalone.
+    query_refinement_url: str = Field(default="http://localhost:8005", validation_alias="QUERY_REFINEMENT_URL")
 
     # Offline-eval throughput: how many search requests to issue concurrently. Bounded —
     # the representation-service does the per-query scoring, so this trades its CPU for

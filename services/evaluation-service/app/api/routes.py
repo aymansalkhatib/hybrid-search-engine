@@ -127,6 +127,15 @@ def evaluate(req: EvaluateRequest, request: Request) -> JobStatus:
                 "ingest it first via the doc-store POST /dataset/prepare"
             ),
         )
+    # Refinement is optional; only require it to be up when this run asks for it.
+    if req.refine is not None and not state.refinement.is_healthy():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"query-refinement-service unavailable at {settings.query_refinement_url}; "
+                "it refines the test queries for this with-refinement run"
+            ),
+        )
 
     runs = req.runs or _default_runs()
     metrics = req.metrics or list(DEFAULT_METRICS)
@@ -138,6 +147,8 @@ def evaluate(req: EvaluateRequest, request: Request) -> JobStatus:
     per_query = req.per_query
     retrieval = state.retrieval
     doc_store = state.doc_store
+    refinement = state.refinement
+    refine_options = req.refine
     concurrency = settings.concurrency
     label = req.label
 
@@ -161,6 +172,8 @@ def evaluate(req: EvaluateRequest, request: Request) -> JobStatus:
             advance=progress.advance,
             set_total=lambda n: progress.update(total=n),
             set_message=lambda m: progress.update(message=m),
+            refine_options=refine_options,
+            refinement=refinement,
         )
         store.save(report)
         if sidecar is not None:

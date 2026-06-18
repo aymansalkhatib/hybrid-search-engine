@@ -585,3 +585,14 @@ pre.json { font-family: var(--mono); font-size: 12px; line-height: 1.55; backgro
   .sidebar { display: none; }
   .topbar-mid { display: none; }
 }
+
+/* ---- query refinement view ---- */
+.btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.rf-row { display: flex; align-items: center; gap: 12px; }
+.rf-row .norm-box { margin: 6px 0; flex: 1; }
+.rf-k { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); width: 62px; flex: none; text-align: right; }
+.rf-sec { margin-top: 16px; }
+.rf-h { font-size: 12px; font-weight: 600; color: var(--text-2); margin: 0 0 9px; }
+.chip-link { cursor: pointer; }
+.chip s { text-decoration: line-through; opacity: .8; }
+.mono { font-family: var(--mono); }

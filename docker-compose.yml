@@ -114,6 +114,25 @@ services:
       - ir-net
     restart: unless-stopped
 
+  query-refinement-service:
+    build:
+      context: .
+      dockerfile: services/query-refinement-service/Dockerfile
+    image: ir-project/query-refinement-service
+    container_name: ir-query-refinement
+    env_file:
+      - path: .env
+        required: true
+    # Internal-only: reachable on the compose network at query-refinement-service:8005.
+    # Not published to the host — the API Gateway is the single external door (§4).
+    expose:
+      - "8005"
+    # Owns no artifacts: resources (SymSpell dict + WordNet) are baked into the image
+    # and loaded at startup; it refines the raw query and returns a refined string.
+    networks:
+      - ir-net
+    restart: unless-stopped
+
   evaluation-service:
     build:
       context: .
@@ -232,6 +251,7 @@ services:
       - indexing-service
       - representation-service
       - retrieval-service
+      - query-refinement-service
       - evaluation-service
       - doc-store-service
     networks:
