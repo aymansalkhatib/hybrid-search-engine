@@ -2,8 +2,10 @@
 
 Offline: ``POST /build`` streams the dataset through the preprocessing-service and
 accumulates postings + doc lengths, persisting the result to the data volume.
-Online: the term/doc query endpoints read the loaded index (no preprocessing
-needed). Raw document text is owned by the doc-store, not this service.
+Online: the term/doc query endpoints read the loaded index, and ``POST /match`` does
+**Boolean retrieval** (AND/OR over the postings, no scoring model) — the inverted-index
+-only search the retrieval-service exposes. Raw document text is owned by the doc-store,
+not this service.
 """
 
 from __future__ import annotations
@@ -49,7 +51,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="IR Project — Indexing Service",
     version=settings.version,
-    description="Builds and serves the inverted index (postings, df, doc lengths, avgdl).",
+    description="Builds & serves the inverted index (postings, df, doc lengths, avgdl) + Boolean match.",
     lifespan=lifespan,
 )
 

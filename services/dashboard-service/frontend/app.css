@@ -493,6 +493,7 @@ pre.json { font-family: var(--mono); font-size: 12px; line-height: 1.55; backgro
 .hit-id { font-size: 12px; color: var(--muted); }
 .hit-score { font-family: var(--mono); font-size: 12px; color: var(--ok); font-weight: 600; }
 .hit-text { font-size: 13px; color: var(--text-2); line-height: 1.55; word-break: break-word; }
+.muted { color: var(--faint); font-size: 0.9em; margin-left: 1px; }
 
 @media (max-width: 1100px) {
   .kpi-row, .stat-grid { grid-template-columns: repeat(2, 1fr); }

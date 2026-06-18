@@ -17,6 +17,9 @@ from app.config import settings
 from app.domain.builder import build_index
 from app.domain.inverted_index import INDEX_VERSION, InvertedIndex
 from shared.contracts import (
+    BooleanMatchHit,
+    BooleanMatchRequest,
+    BooleanMatchResponse,
     BuildIndexRequest,
     BuiltIndexes,
     DocInfo,
@@ -24,6 +27,7 @@ from shared.contracts import (
     IndexStats,
     IndexStatusResponse,
     JobStatus,
+    MatchedTerm,
     Posting,
     PostingsResponse,
     PreprocessOptions,
@@ -231,6 +235,38 @@ def postings(
         df=len(pairs),
         cf=sum(tf for _, tf in pairs),
         postings=[Posting(doc_id=d, tf=tf) for d, tf in pairs[:limit]],
+    )
+
+
+@router.post("/match", response_model=BooleanMatchResponse)
+def match(req: BooleanMatchRequest, request: Request) -> BooleanMatchResponse:
+    """Boolean retrieval over the inverted index — **match-only, no scoring model**.
+
+    The query is normalized with the index's **own build options** (so it lands in the
+    same term space as the corpus), then matched by postings set algebra: ``AND`` =
+    docs with every term, ``OR`` = docs with any. Ordered by coordination (# matched
+    terms), not relevance. This is the primitive the retrieval-service's Boolean search
+    calls. **404** if no index; **503** if preprocessing is down.
+    """
+    index = _require_index(request, req.dataset)
+    state = request.app.state
+    if not state.preprocessing.is_healthy():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"preprocessing-service unavailable at {settings.preprocessing_url}; "
+                "the query is normalized the same way as the indexed corpus"
+            ),
+        )
+    options = PreprocessOptions(**index.options) if index.options else PreprocessOptions()
+    tokens = state.preprocessing.preprocess_batch([req.query], options)[0]
+    term_df, total, hits = index.boolean_match(tokens, req.operator, req.top_k)
+    return BooleanMatchResponse(
+        dataset_id=index.dataset_id,
+        operator=req.operator,
+        terms=[MatchedTerm(term=t, df=df) for t, df in term_df],
+        total_matched=total,
+        hits=[BooleanMatchHit(doc_id=d, matched=m) for d, m in hits],
     )
 
 

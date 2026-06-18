@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     representation_url: str = Field(
         default="http://localhost:8003", validation_alias="REPRESENTATION_URL"
     )
+    # The inverted index — source for Boolean (index-only) search.
+    indexing_url: str = Field(
+        default="http://localhost:8002", validation_alias="INDEXING_URL"
+    )
     doc_store_url: str = Field(
         default="http://localhost:8007", validation_alias="DOC_STORE_URL"
     )

@@ -1,15 +1,15 @@
 """HTTP layer (thin) for the retrieval-service — the online query path.
 
-``POST /search`` ranks documents for a query and returns the top-k with their
-**original** text. It supports a single representation or a **hybrid**:
+Two endpoints, both returning the top-k with their **original** text:
 
-* ``model`` ∈ {tfidf, bm25, embedding, bert} → one model's ranking (``/rank``).
-* ``model='hybrid'`` → ``serial`` re-ranks one model's candidates with another, or
-  ``parallel`` fuses several models' lists (RRF / weighted).
+* ``POST /search`` — model-based ranking. ``model`` ∈ {tfidf, bm25, embedding, bert}
+  for one model's ranking, or ``model='hybrid'`` for ``serial`` re-rank / ``parallel``
+  fusion. Scoring happens in the representation-service.
+* ``POST /boolean`` — inverted-index-only retrieval (AND/OR over postings, **no**
+  scoring model). Matching happens in the indexing-service's ``/match`` primitive.
 
-Scoring itself happens in the representation-service (single owner of the artifacts);
-this service orchestrates the strategy, then fetches the original docs by id from the
-doc-store for display (the graded by-id read).
+Either way this service only orchestrates the strategy, then fetches the original docs
+by id from the doc-store for display (the graded by-id read).
 """
 
 from __future__ import annotations
@@ -22,7 +22,14 @@ from fastapi import APIRouter, HTTPException, Request, status
 
 from app.config import settings
 from app.domain.hybrid import parallel_search, serial_search
-from shared.contracts import SearchHit, SearchRequest, SearchResponse
+from shared.contracts import (
+    BooleanSearchHit,
+    BooleanSearchRequest,
+    BooleanSearchResponse,
+    SearchHit,
+    SearchRequest,
+    SearchResponse,
+)
 
 logger = logging.getLogger("retrieval-service")
 router = APIRouter(tags=["retrieval"])
@@ -43,12 +50,12 @@ def _resolve_or_400(dataset: str) -> str:
     return dataset_id
 
 
-def _representation_error(exc: httpx.HTTPStatusError) -> HTTPException:
-    """Re-raise a downstream representation error with the SAME status & message.
+def _downstream_error(exc: httpx.HTTPStatusError) -> HTTPException:
+    """Re-raise a downstream error (representation/indexing) with its SAME status & message.
 
-    The representation-service already returns clean, specific errors (404 = model not
-    built, 503 = preprocessing down). Forwarding them verbatim means the UI still sees
-    "build the model first" instead of a generic 502.
+    Those services already return clean, specific errors (404 = not built, 503 =
+    preprocessing down). Forwarding them verbatim means the UI still sees "build it
+    first" instead of a generic 502.
     """
     try:
         body = exc.response.json()
@@ -106,7 +113,7 @@ def search(req: SearchRequest, request: Request) -> SearchResponse:
             )
             mode = None
     except httpx.HTTPStatusError as exc:
-        raise _representation_error(exc) from exc
+        raise _downstream_error(exc) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -128,4 +135,59 @@ def search(req: SearchRequest, request: Request) -> SearchResponse:
     return SearchResponse(
         dataset_id=dataset_id, model=req.model, mode=mode, query=req.query,
         took_ms=round((time.perf_counter() - t0) * 1000, 2), total=len(hits), hits=hits,
+    )
+
+
+# ---- boolean search (inverted-index-only, no scoring model) ---------------
+
+@router.post("/boolean", response_model=BooleanSearchResponse)
+def boolean_search(req: BooleanSearchRequest, request: Request) -> BooleanSearchResponse:
+    """Search the inverted index only — match docs containing the query terms (AND =
+    all, OR = any), with **no** ranking model.
+
+    The matching is done by the indexing-service's ``/match`` primitive (it owns the
+    index); this service attaches the **original** text by id for display. **400** for
+    an unknown dataset; **404** if the index isn't built; **503** if indexing is down.
+    """
+    dataset_id = _resolve_or_400(req.dataset)
+    state = request.app.state
+    idx = state.indexing
+
+    if not idx.is_healthy():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"indexing-service unavailable at {settings.indexing_url}; "
+                "it owns the inverted index Boolean search matches against"
+            ),
+        )
+
+    t0 = time.perf_counter()
+    try:
+        matched = idx.match(
+            dataset=dataset_id, query=req.query, operator=req.operator, top_k=req.top_k
+        )
+    except httpx.HTTPStatusError as exc:
+        raise _downstream_error(exc) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"indexing-service error at {settings.indexing_url}: {exc}",
+        ) from exc
+
+    texts: dict[str, str] = {}
+    if req.with_text and matched.hits:
+        try:
+            texts = state.doc_store.fetch_originals(dataset_id, [h.doc_id for h in matched.hits])
+        except httpx.HTTPError:
+            texts = {}
+
+    hits = [
+        BooleanSearchHit(rank=i + 1, doc_id=h.doc_id, matched=h.matched, text=texts.get(h.doc_id))
+        for i, h in enumerate(matched.hits)
+    ]
+    return BooleanSearchResponse(
+        dataset_id=dataset_id, operator=matched.operator, query=req.query,
+        terms=matched.terms, took_ms=round((time.perf_counter() - t0) * 1000, 2),
+        total=matched.total_matched, hits=hits,
     )

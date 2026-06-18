@@ -19,6 +19,7 @@ const state = {
   seModel: "bm25",     // search model
   seMode: "parallel",  // hybrid mode
   seFusion: "rrf",     // parallel fusion method
+  seBoolOp: "and",     // boolean (inverted-index) operator
 };
 
 /* ---------- tiny helpers ---------- */
@@ -776,8 +777,10 @@ function seUsesBm25() {
     : ($("#seFirst").value === "bm25" || $("#seRerank").value === "bm25");
 }
 function seSyncControls() {
+  const isBool = state.seModel === "boolean";
   $("#seHybrid").hidden = state.seModel !== "hybrid";
-  $("#seBm25Row").hidden = !seUsesBm25();
+  $("#seBm25Row").hidden = isBool || !seUsesBm25();
+  $("#seBoolRow").hidden = !isBool;
   if (state.seModel === "hybrid") {
     $("#seParallel").hidden = state.seMode !== "parallel";
     $("#seSerial").hidden = state.seMode !== "serial";
@@ -788,9 +791,22 @@ async function runSearch() {
   const query = $("#seQuery").value.trim();
   const out = $("#seResults");
   if (!query) { toast("Enter a query", "err"); return; }
+  const top_k = Number($("#seTopk").value) || 10;
+
+  // Boolean (inverted-index-only) search: a different endpoint and payload.
+  if (state.seModel === "boolean") {
+    out.className = "loading"; out.innerHTML = `<span class="spinner"></span> matching…`;
+    $("#seMeta").hidden = true;
+    const r = await api("retrieval", "boolean",
+      { method: "POST", json: { dataset: state.dataset, query, operator: state.seBoolOp, top_k, with_text: true } });
+    if (!r.ok) { out.className = "result-empty"; out.textContent = `Error: ${errMsg(r)} (build the index first?)`; return; }
+    renderBooleanResults(r.data);
+    return;
+  }
+
   const payload = {
     dataset: state.dataset, model: state.seModel, query, with_text: true,
-    top_k: Number($("#seTopk").value) || 10,
+    top_k,
     k1: Number($("#seK1").value), b: Number($("#seB").value),
   };
   if (state.seModel === "hybrid") {
@@ -831,6 +847,27 @@ function renderSearchResults(d) {
     </div>`).join("")}</div>`;
 }
 
+function renderBooleanResults(d) {
+  const meta = $("#seMeta");
+  meta.hidden = false;
+  const terms = d.terms.map((t) => `${esc(t.term)}<span class="muted">(${fmt(t.df)})</span>`).join(", ") || "—";
+  meta.innerHTML = `${fmt(d.total)} matched · <b>${esc(d.operator.toUpperCase())}</b> · index-only (no scoring) · terms: ${terms} · ${d.took_ms} ms`;
+  const out = $("#seResults");
+  if (!d.hits.length) { out.className = "result-empty"; out.textContent = "No documents match — try OR, fewer terms, or build the index."; return; }
+  out.className = "";
+  out.innerHTML = `<div class="hits">${d.hits.map((h) => `
+    <div class="hit">
+      <div class="hit-rank">${h.rank}</div>
+      <div class="hit-body">
+        <div class="hit-top">
+          <span class="hit-id mono">${esc(h.doc_id)}</span>
+          <span class="hit-score" title="distinct query terms matched">${h.matched} match${h.matched === 1 ? "" : "es"}</span>
+        </div>
+        <div class="hit-text">${esc(trunc(h.text || "(original text unavailable)", 320))}</div>
+      </div>
+    </div>`).join("")}</div>`;
+}
+
 function wireSearch() {
   $("#seRun").addEventListener("click", runSearch);
   $("#seQuery").addEventListener("keydown", (e) => e.key === "Enter" && runSearch());
@@ -849,6 +886,11 @@ function wireSearch() {
     const b = e.target.closest(".seg-btn"); if (!b) return;
     $$("#seFusion .seg-btn").forEach((x) => x.classList.remove("active")); b.classList.add("active");
     state.seFusion = b.dataset.f;
+  });
+  $("#seBoolOp").addEventListener("click", (e) => {
+    const b = e.target.closest(".seg-btn"); if (!b) return;
+    $$("#seBoolOp .seg-btn").forEach((x) => x.classList.remove("active")); b.classList.add("active");
+    state.seBoolOp = b.dataset.op;
   });
   // bm25 sliders
   $("#seK1").addEventListener("input", (e) => { $("#seK1v").textContent = Number(e.target.value).toFixed(1); });

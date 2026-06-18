@@ -9,12 +9,14 @@ configured ``DATASETS`` catalog), so callers stay dataset-agnostic.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
 from shared.contracts.jobs import JobRef
 from shared.contracts.preprocessing import PreprocessOptions
+
+BooleanOperator = Literal["and", "or"]
 
 
 class BuildIndexRequest(BaseModel):
@@ -78,6 +80,46 @@ class TermStats(BaseModel):
     term: str
     df: int
     cf: int
+
+
+# --------------------------------------------------------------------------- #
+#  Boolean match — inverted-index-only retrieval (no scoring model)
+# --------------------------------------------------------------------------- #
+#
+# The oldest, most direct retrieval model: match documents that contain the query
+# terms using the postings lists alone — set intersection (AND) or union (OR), with
+# **no** relevance scoring (no TF-IDF / BM25). This is an **internal** primitive the
+# retrieval-service calls; the index owns its build options, so it normalizes the raw
+# query itself (exactly as the representation-service does for /rank).
+
+
+class MatchedTerm(BaseModel):
+    """A normalized query term and how many docs contain it (df, 0 ⇒ absent)."""
+
+    term: str
+    df: int
+
+
+class BooleanMatchRequest(BaseModel):
+    """Boolean retrieval over the inverted index — match-only, no ranking model."""
+
+    dataset: str
+    query: str = Field(min_length=1)
+    operator: BooleanOperator = Field(default="and", description="AND = all terms; OR = any term")
+    top_k: int = Field(default=10, ge=1, le=1000)
+
+
+class BooleanMatchHit(BaseModel):
+    doc_id: str
+    matched: int            # how many distinct query terms this doc contains (coordination)
+
+
+class BooleanMatchResponse(BaseModel):
+    dataset_id: str
+    operator: str
+    terms: list[MatchedTerm]    # the normalized query terms (+ df), for transparency
+    total_matched: int          # size of the matched set before top_k
+    hits: list[BooleanMatchHit]  # up to top_k, ordered by coordination desc then doc_id
 
 
 class DocInfo(BaseModel):

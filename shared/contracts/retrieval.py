@@ -18,6 +18,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from shared.contracts.indexing import BooleanOperator, MatchedTerm
+
 FusionMethod = Literal["rrf", "weighted"]
 HybridMode = Literal["serial", "parallel"]
 
@@ -98,3 +100,41 @@ class SearchResponse(BaseModel):
     took_ms: float
     total: int                          # hits returned
     hits: list[SearchHit]
+
+
+# --------------------------------------------------------------------------- #
+#  Boolean search — inverted-index-only retrieval (no scoring model)
+# --------------------------------------------------------------------------- #
+#
+# A separate, classic retrieval mode the UI offers alongside the model-based search:
+# match documents purely by the inverted index (AND/OR over postings), with no
+# relevance scoring. The retrieval-service delegates the matching to the
+# indexing-service's ``/match`` primitive, then attaches the original text by id.
+
+
+class BooleanSearchRequest(BaseModel):
+    """Search the inverted index only — match documents containing the query terms
+    (AND = all, OR = any), with **no** ranking model (no TF-IDF / BM25)."""
+
+    dataset: str
+    query: str = Field(min_length=1)
+    operator: BooleanOperator = Field(default="and", description="AND = all terms; OR = any term")
+    top_k: int = Field(default=10, ge=1, le=200)
+    with_text: bool = Field(default=True, description="Fetch the original doc text by id for display")
+
+
+class BooleanSearchHit(BaseModel):
+    rank: int
+    doc_id: str
+    matched: int                        # # of distinct query terms the doc contains
+    text: Optional[str] = None          # original text (when with_text and found in the store)
+
+
+class BooleanSearchResponse(BaseModel):
+    dataset_id: str
+    operator: str
+    query: str
+    terms: list[MatchedTerm]            # normalized query terms (+ df) — what actually matched
+    took_ms: float
+    total: int                          # size of the matched set (before top_k)
+    hits: list[BooleanSearchHit]

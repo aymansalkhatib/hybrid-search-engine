@@ -78,6 +78,42 @@ class InvertedIndex:
         """Postings as external ``(doc_id, tf)`` pairs, ordered by doc index."""
         return [(self.doc_ids[i], tf) for i, tf in self.postings.get(term, ())]
 
+    # ---- boolean retrieval (inverted-index-only, no scoring model) ----
+    def boolean_match(
+        self, terms: list[str], operator: str, top_k: int
+    ) -> tuple[list[tuple[str, int]], int, list[tuple[str, int]]]:
+        """Match documents by the postings lists alone — **no relevance scoring**.
+
+        ``AND`` keeps docs containing **every** distinct query term; ``OR`` keeps docs
+        containing **any**. Results are ordered by *coordination* (how many distinct
+        query terms a doc contains) descending, then by ``doc_id`` — a deterministic
+        tie-break, explicitly **not** a TF-IDF/BM25 ranking.
+
+        Returns ``(term_df, total_matched, hits)`` where ``term_df`` is each distinct
+        query term with its ``df`` (0 ⇒ absent), and ``hits`` is up to ``top_k``
+        ``(doc_id, matched)`` pairs.
+        """
+        distinct = list(dict.fromkeys(terms))  # dedupe, preserve order
+        coord: Counter[int] = Counter()        # doc_idx -> # distinct query terms matched
+        term_df: list[tuple[str, int]] = []
+        for term in distinct:
+            plist = self.postings.get(term)
+            term_df.append((term, len(plist) if plist else 0))
+            if plist:
+                coord.update(idx for idx, _tf in plist)
+
+        if operator == "and":
+            need = len(distinct)
+            matched = [(idx, c) for idx, c in coord.items() if c == need]
+        else:  # "or"
+            matched = list(coord.items())
+
+        total = len(matched)
+        # coordination desc, then external doc_id asc (stable, deterministic)
+        matched.sort(key=lambda ic: (-ic[1], self.doc_ids[ic[0]]))
+        hits = [(self.doc_ids[idx], c) for idx, c in matched[:top_k]]
+        return term_df, total, hits
+
     def doc_length(self, doc_id: str) -> int | None:
         idx = self._doc_index_map().get(doc_id)
         return None if idx is None else self.doc_lengths[idx]
