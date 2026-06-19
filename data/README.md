@@ -9,7 +9,7 @@ persistent across restarts/rebuilds.
 | Path | What | Created by |
 |------|------|------------|
 | `dataset/` | downloaded datasets, set via `IR_DATASETS_HOME`. Each dataset lives in its **own subfolder** (`dataset/beir/quora/test/…`) with a `.manifest.json` marking a complete download — so datasets are independently deletable | the `POST /dataset/download` endpoint |
-| `artifacts/` | built artifacts: inverted indexes (later: TF‑IDF/embeddings/BM25) | the `/build` endpoints |
+| `artifacts/` | built artifacts: inverted indexes, representations (TF‑IDF/Word2Vec/BERT/BM25), clustering & topic models, and evaluation reports (`artifacts/eval/`) | the `/build` & `/evaluate` endpoints |
 | `mongo/` | MongoDB engine files — the **raw document store** read by id at query time | the `doc-store-db` (MongoDB) container |
 
 All three are created automatically at runtime (`./data:/app/data` for the cache + artifacts,
