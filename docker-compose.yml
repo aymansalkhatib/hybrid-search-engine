@@ -114,6 +114,29 @@ services:
       - ir-net
     restart: unless-stopped
 
+  clustering-service:
+    build:
+      context: .
+      dockerfile: services/clustering-service/Dockerfile
+    image: ir-project/clustering-service
+    container_name: ir-clustering
+    env_file:
+      - path: .env
+        required: true
+    # Internal-only: reachable on the compose network at clustering-service:8008.
+    # Not published to the host — the API Gateway is the single external door (§4).
+    expose:
+      - "8008"
+    # Heavy artifact (fitted TF-IDF + KMeans) persists on the host volume.
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      doc-store-service:          # clusters the raw docs stored in the doc-store
+        condition: service_healthy
+    networks:
+      - ir-net
+    restart: unless-stopped
+
   query-refinement-service:
     build:
       context: .
@@ -252,6 +275,7 @@ services:
       - representation-service
       - retrieval-service
       - query-refinement-service
+      - clustering-service
       - evaluation-service
       - doc-store-service
     networks:

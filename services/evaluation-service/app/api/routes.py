@@ -136,6 +136,23 @@ def evaluate(req: EvaluateRequest, request: Request) -> JobStatus:
                 "it refines the test queries for this with-refinement run"
             ),
         )
+    # Cluster re-ranking is optional too; only require clustering to be up (and built)
+    # when this run asks for it, so a "with-clustering" report isn't silently == baseline.
+    if req.cluster_rerank:
+        try:
+            cl = httpx.get(f"{settings.clustering_url}/status", params={"dataset": dataset_id}, timeout=5.0)
+            built = cl.status_code == 200 and cl.json().get("built")
+        except httpx.HTTPError:
+            built = False
+        if not built:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"no clustering built for '{dataset_id}' (clustering-service at "
+                    f"{settings.clustering_url}); build it first via the Clustering tab, "
+                    "else a with-clustering run would just equal the baseline"
+                ),
+            )
 
     runs = req.runs or _default_runs()
     metrics = req.metrics or list(DEFAULT_METRICS)
@@ -149,6 +166,7 @@ def evaluate(req: EvaluateRequest, request: Request) -> JobStatus:
     doc_store = state.doc_store
     refinement = state.refinement
     refine_options = req.refine
+    cluster_rerank = req.cluster_rerank
     concurrency = settings.concurrency
     label = req.label
 
@@ -174,6 +192,7 @@ def evaluate(req: EvaluateRequest, request: Request) -> JobStatus:
             set_message=lambda m: progress.update(message=m),
             refine_options=refine_options,
             refinement=refinement,
+            cluster_rerank=cluster_rerank,
         )
         store.save(report)
         if sidecar is not None:

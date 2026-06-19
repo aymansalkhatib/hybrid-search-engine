@@ -87,6 +87,14 @@ class EvaluateRequest(BaseModel):
             "and compare reports. Refinement is applied once per query and shared across all runs."
         ),
     )
+    cluster_rerank: bool = Field(
+        default=False,
+        description=(
+            "Apply cluster-based re-ranking to every run (extra feature §11): candidates in "
+            "the query's cluster are floated to the top. False = the 'before' baseline; set it "
+            "and label the report (e.g. 'with-clustering') to measure the before/after effect."
+        ),
+    )
     force: bool = Field(default=False, description="Re-run and overwrite even if a report with this label exists")
 
 

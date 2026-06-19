@@ -21,6 +21,7 @@ const state = {
   seFusion: "rrf",     // parallel fusion method
   seBoolOp: "and",     // boolean (inverted-index) operator
   rfLast: null,        // last query-refinement response (for "search with refined")
+  clPolling: null,     // clustering build job poller
   evReportId: null,    // evaluation report currently in view
   evCompareId: null,   // evaluation report to overlay (before/after compare)
   evReports: [],       // cached saved-reports list
@@ -826,6 +827,7 @@ async function runSearch() {
     dataset: state.dataset, model: state.seModel, query, with_text: true,
     top_k,
     k1: Number($("#seK1").value), b: Number($("#seB").value),
+    cluster_rerank: $("#seCluster").checked,
   };
   if (state.seModel === "hybrid") {
     if (state.seMode === "parallel") {
@@ -1113,6 +1115,7 @@ async function runEvaluation() {
       max_edit_distance: 2,
     };
   }
+  if ($("#evCluster").checked) payload.cluster_rerank = true;
 
   const r = await api("evaluation", "evaluate", { method: "POST", json: payload });
   if (!r.ok) {
@@ -1643,6 +1646,11 @@ function wireEvaluation() {
     if (e.target.checked && lbl.value.trim() === "baseline") lbl.value = "with-refinement";
     else if (!e.target.checked && lbl.value.trim() === "with-refinement") lbl.value = "baseline";
   });
+  $("#evCluster").addEventListener("change", (e) => {
+    const lbl = $("#evLabel");
+    if (e.target.checked && lbl.value.trim() === "baseline") lbl.value = "with-clustering";
+    else if (!e.target.checked && lbl.value.trim() === "with-clustering") lbl.value = "baseline";
+  });
   $("#evReports").addEventListener("click", (e) => {
     const b = e.target.closest("[data-evact]");
     if (!b) return;
@@ -1725,6 +1733,131 @@ function renderServices() {
 /* ============================================================
    WIRING
    ============================================================ */
+/* ============================================================
+   CLUSTERING (extra feature) — build · clusters · 2-D map · assign
+   Talks to the clustering-service via the console proxy.
+   ============================================================ */
+const clPalette = (k) => Array.from({ length: Math.max(k, 1) }, (_, i) => `hsl(${Math.round(i * 360 / Math.max(k, 1))} 65% 55%)`);
+
+async function loadClusterStatus() {
+  $("#clDsBadge").textContent = state.dataset || "—";
+  const r = await api("clustering", "status", { query: { dataset: state.dataset } });
+  if (!r.ok) return;
+  const d = r.data;
+  if (d.active_job && d.active_job.job_id) pollClusterJob(d.active_job.job_id);
+  if (d.built && d.stats) { renderClusterStats(d.stats); renderClusters(d.stats); loadClusterPlot(); }
+  else {
+    $("#clSummary").hidden = true;
+    $("#clClusters").className = "result-empty"; $("#clClusters").textContent = "No clustering yet — build one above.";
+    $("#clPlot").className = "result-empty"; $("#clPlot").textContent = "The cluster scatter plot appears here after a build.";
+  }
+}
+
+function renderClusterStats(s) {
+  const el = $("#clSummary"); el.hidden = false;
+  const sil = s.silhouette == null ? "—" : Number(s.silhouette).toFixed(3);
+  el.innerHTML = `clustered <b>${fmt(s.num_docs)}</b> docs into <b>${s.n_clusters}</b> clusters · silhouette <b>${sil}</b> · features ${fmt(s.max_features)}`;
+}
+
+function renderClusters(s) {
+  const colors = clPalette(s.n_clusters);
+  const max = Math.max(...s.clusters.map((c) => c.size), 1);
+  const box = $("#clClusters"); box.className = "";
+  box.innerHTML = `<div class="cl-list">${s.clusters.map((c) => `
+    <div class="cl-row">
+      <span class="cl-dot" style="background:${colors[c.cluster_id]}"></span>
+      <span class="cl-id">#${c.cluster_id}</span>
+      <div class="cl-bar"><i style="width:${Math.round(100 * c.size / max)}%;background:${colors[c.cluster_id]}"></i><b>${fmt(c.size)}</b></div>
+      <div class="cl-terms">${c.top_terms.slice(0, 8).map((t) => `<span class="chip">${esc(t)}</span>`).join("")}</div>
+    </div>`).join("")}</div>`;
+}
+
+async function loadClusterPlot() {
+  const r = await api("clustering", "plot", { query: { dataset: state.dataset } });
+  const box = $("#clPlot");
+  if (!r.ok || !r.data.points || !r.data.points.length) { box.className = "result-empty"; box.textContent = "No plot data."; return; }
+  box.className = "";
+  box.innerHTML = clScatterSVG(r.data.points, r.data.n_clusters);
+}
+
+function clScatterSVG(points, k) {
+  const colors = clPalette(k);
+  const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const W = 360, H = 300, pad = 14;
+  const sx = (x) => pad + (maxX - minX ? (x - minX) / (maxX - minX) : 0.5) * (W - 2 * pad);
+  const sy = (y) => H - pad - (maxY - minY ? (y - minY) / (maxY - minY) : 0.5) * (H - 2 * pad);
+  const dots = points.map((p) => `<circle cx="${sx(p.x).toFixed(1)}" cy="${sy(p.y).toFixed(1)}" r="2.6" fill="${colors[p.cluster]}" opacity="0.75"/>`).join("");
+  return `<svg class="cl-svg" viewBox="0 0 ${W} ${H}" width="100%">${dots}</svg>`;
+}
+
+async function clusterBuild() {
+  const payload = {
+    dataset: state.dataset,
+    n_clusters: Number($("#clK").value) || 8,
+    max_docs: Number($("#clMaxDocs").value) || 20000,
+    max_features: Number($("#clMaxFeat").value) || 20000,
+    force: $("#clForce").checked,
+  };
+  const r = await api("clustering", "build", { method: "POST", json: payload });
+  if (!r.ok) { toast(`clustering build failed: ${errMsg(r)}`, "err", 6000); return; }
+  const job = r.data;
+  if (["skipped", "succeeded", "failed"].includes(job.state)) { handleClusterDone(job); return; }
+  toast(`Clustering ${state.dataset} into ${payload.n_clusters} groups…`, "info", 4000);
+  pollClusterJob(job.job_id);
+}
+
+function resetClusterProgress() {
+  if (state.clPolling) { clearInterval(state.clPolling); state.clPolling = null; }
+  $("#clProg").hidden = true; $("#clProgLbl").hidden = true; $("#clBuild").disabled = false;
+}
+
+async function handleClusterDone(job) {
+  resetClusterProgress();
+  toast(`Clustering ${job.state}${job.error ? " — " + job.error : ""}`, job.state === "failed" ? "err" : "ok", 6000);
+  loadClusterStatus();
+}
+
+function pollClusterJob(jobId) {
+  resetClusterProgress();
+  const prog = $("#clProg"), bar = $("#clBar"), lbl = $("#clProgLbl");
+  prog.hidden = false; lbl.hidden = false; $("#clBuild").disabled = true;
+  let fails = 0;
+  state.clPolling = setInterval(async () => {
+    const r = await api("clustering", `jobs/${jobId}`);
+    if (!r.ok) { if (r.status === 404 || ++fails >= 5) { resetClusterProgress(); loadClusterStatus(); } return; }
+    fails = 0;
+    const j = r.data;
+    const det = j.percent != null && j.percent > 0;
+    prog.classList.toggle("indet", !det);
+    if (det) bar.style.width = `${j.percent}%`;
+    const counts = j.total ? `(${fmt(j.processed)}/${fmt(j.total)})` : `(${fmt(j.processed)})`;
+    lbl.querySelector(".msg").textContent = `${j.message || j.state} ${counts}`;
+    lbl.querySelector(".pct").innerHTML = det ? `${j.percent}%` : `<span class="spinner"></span>`;
+    if (["succeeded", "failed", "skipped"].includes(j.state)) handleClusterDone(j);
+  }, 1200);
+}
+
+async function clusterAssign() {
+  const text = $("#clAssignText").value.trim();
+  const out = $("#clAssignOut");
+  if (!text) { toast("Enter a query", "err"); return; }
+  out.className = "loading"; out.innerHTML = `<span class="spinner"></span> assigning…`;
+  const r = await api("clustering", "assign", { method: "POST", json: { dataset: state.dataset, texts: [text] } });
+  if (!r.ok) { out.className = "result-empty"; out.textContent = `Error: ${errMsg(r)} (build the clustering first?)`; return; }
+  const a = r.data.assignments[0];
+  out.className = "";
+  out.innerHTML = `
+    <div class="rf-row"><span class="rf-k">cluster</span><div class="norm-box">#${a.cluster_id}</div></div>
+    <div class="rf-sec"><h4 class="rf-h">Cluster theme (top terms)</h4><div class="chips">${a.top_terms.map((t) => `<span class="chip">${esc(t)}</span>`).join("")}</div></div>`;
+}
+
+function wireClustering() {
+  $("#clBuild").addEventListener("click", clusterBuild);
+  $("#clAssignBtn").addEventListener("click", clusterAssign);
+  $("#clAssignText").addEventListener("keydown", (e) => e.key === "Enter" && clusterAssign());
+}
+
 function wireNav() {
   $$("#nav .nav-item").forEach((btn) => btn.addEventListener("click", () => {
     $$("#nav .nav-item").forEach((b) => b.classList.remove("active"));
@@ -1741,6 +1874,7 @@ function onViewEnter(view) {
   if (view === "index") loadIndexStats();
   if (view === "representation") loadRepresentation();
   if (view === "search") seSyncControls();
+  if (view === "clustering") loadClusterStatus();
   if (view === "evaluation") { initEvalControls(); loadEvalReports(); evResumeRunningJob(); }
   if (view === "docstore") { browseDocs(true); browseQueries(true); }
   if (view === "services") renderServices();
@@ -1780,6 +1914,9 @@ function wireActions() {
 
   // query refinement (standalone playground)
   wireRefine();
+
+  // clustering (extra feature)
+  wireClustering();
 
   // search
   wireSearch();

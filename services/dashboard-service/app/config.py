@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     query_refinement_url: str
     evaluation_url: str
     doc_store_url: str
+    clustering_url: str = Field(default="http://clustering-service:8008", validation_alias="CLUSTERING_URL")
 
     # ---- host-published ports (browser-facing deep links) ----
     api_gateway_port: int = Field(default=8000, validation_alias="API_GATEWAY_PORT")
@@ -44,6 +45,7 @@ class Settings(BaseSettings):
     query_refinement_port: int = Field(default=8005, validation_alias="QUERY_REFINEMENT_PORT")
     evaluation_port: int = Field(default=8006, validation_alias="EVALUATION_PORT")
     doc_store_port: int = Field(default=8007, validation_alias="DOC_STORE_PORT")
+    clustering_port: int = Field(default=8008, validation_alias="CLUSTERING_PORT")
     mongo_express_port: int = Field(default=8081, validation_alias="MONGO_EXPRESS_PORT")
     dashboard_port: int = Field(default=8090, validation_alias="DASHBOARD_PORT")
 

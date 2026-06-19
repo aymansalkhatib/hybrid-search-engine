@@ -21,6 +21,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 
 from app.config import settings
+from app.domain.cluster_rerank import cluster_rerank
 from app.domain.hybrid import parallel_search, serial_search
 from shared.contracts import (
     BooleanSearchHit,
@@ -89,6 +90,9 @@ def search(req: SearchRequest, request: Request) -> SearchResponse:
             ),
         )
 
+    # Cluster re-ranking reorders a candidate POOL, so retrieve deeper than top_k when on.
+    retrieve_k = min(max(req.top_k * 5, 50), 200) if req.cluster_rerank else req.top_k
+
     t0 = time.perf_counter()
     try:
         if req.model == "hybrid":
@@ -96,20 +100,20 @@ def search(req: SearchRequest, request: Request) -> SearchResponse:
             if spec.mode == "serial":
                 results = serial_search(
                     client=rep, dataset=dataset_id, first=spec.first, rerank=spec.rerank,
-                    query=req.query, candidates=spec.candidates, top_k=req.top_k,
+                    query=req.query, candidates=spec.candidates, top_k=retrieve_k,
                     k1=req.k1, b=req.b,
                 )
             else:
                 results = parallel_search(
                     client=rep, dataset=dataset_id, components=spec.components,
                     query=req.query, fusion=spec.fusion, weights=spec.weights,
-                    rrf_k=spec.rrf_k, top_k=req.top_k, k1=req.k1, b=req.b,
+                    rrf_k=spec.rrf_k, top_k=retrieve_k, k1=req.k1, b=req.b,
                 )
             mode = spec.mode
         else:
             results = rep.rank(
                 dataset=dataset_id, model=req.model, query=req.query,
-                top_k=req.top_k, k1=req.k1, b=req.b,
+                top_k=retrieve_k, k1=req.k1, b=req.b,
             )
             mode = None
     except httpx.HTTPStatusError as exc:
@@ -120,13 +124,37 @@ def search(req: SearchRequest, request: Request) -> SearchResponse:
             detail=f"representation-service error at {settings.representation_url}: {exc}",
         ) from exc
 
+    # Cluster-based re-ranking (extra feature): assign the query + pool to clusters and
+    # float same-cluster candidates to the top. Needs the pool's original texts, which
+    # we then reuse for display. Falls back to the base ranking if clustering is down or
+    # not built — the feature is optional and must never break a search.
+    text_cache: dict[str, str] = {}
+    if req.cluster_rerank and results:
+        try:
+            text_cache = state.doc_store.fetch_originals(dataset_id, [d for d, _ in results])
+        except httpx.HTTPError:
+            text_cache = {}
+        try:
+            results = cluster_rerank(
+                results=results, query=req.query, texts=text_cache,
+                client=state.clustering, dataset=dataset_id, top_k=req.top_k,
+            )
+            mode = f"{mode}+cluster" if mode else "cluster"
+        except httpx.HTTPError:
+            results = results[:req.top_k]  # clustering unavailable/not built → base ranking
+    results = results[:req.top_k]
+
     # Show the ORIGINAL document text — read by id from the doc-store (graded path).
     texts: dict[str, str] = {}
     if req.with_text and results:
-        try:
-            texts = state.doc_store.fetch_originals(dataset_id, [d for d, _ in results])
-        except httpx.HTTPError:
-            texts = {}  # degrade gracefully: still return the ranking if the doc-store blips
+        need = [d for d, _ in results]
+        texts = {d: text_cache[d] for d in need if d in text_cache}
+        missing = [d for d in need if d not in texts]
+        if missing:
+            try:
+                texts.update(state.doc_store.fetch_originals(dataset_id, missing))
+            except httpx.HTTPError:
+                pass  # degrade gracefully: still return the ranking if the doc-store blips
 
     hits = [
         SearchHit(rank=i + 1, doc_id=d, score=round(float(s), 6), text=texts.get(d))

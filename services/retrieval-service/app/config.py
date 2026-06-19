@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     doc_store_url: str = Field(
         default="http://localhost:8007", validation_alias="DOC_STORE_URL"
     )
+    # Extra feature (§11): cluster-based re-ranking. Optional — only called when a
+    # search sets cluster_rerank; defaults so the service still runs standalone.
+    clustering_url: str = Field(
+        default="http://localhost:8008", validation_alias="CLUSTERING_URL"
+    )
 
     @property
     def datasets(self) -> list[str]:

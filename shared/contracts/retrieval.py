@@ -77,6 +77,11 @@ class SearchRequest(BaseModel):
     b: float = Field(default=0.75, ge=0.0, le=1.0, description="BM25 length-normalization")
     hybrid: Optional[HybridSpec] = Field(default=None, description="Required when model='hybrid'")
     with_text: bool = Field(default=True, description="Fetch the original doc text by id for display")
+    # Extra feature (§11): cluster-based re-ranking. When true, the query is assigned to
+    # its document cluster and candidates sharing that cluster are floated to the top —
+    # a toggleable stage, so its before/after effect is evaluable. No-op (falls back to
+    # the base ranking) if no clustering is built for the dataset.
+    cluster_rerank: bool = Field(default=False, description="Re-rank so candidates in the query's cluster come first")
 
     @model_validator(mode="after")
     def _check(self) -> "SearchRequest":

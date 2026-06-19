@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.adapters.clustering_client import ClusteringClient
 from app.adapters.doc_store_client import DocStoreClient
 from app.adapters.indexing_client import IndexingClient
 from app.adapters.representation_client import RepresentationClient
@@ -41,15 +42,18 @@ async def lifespan(app: FastAPI):
     app.state.representation = RepresentationClient(settings.representation_url)
     app.state.indexing = IndexingClient(settings.indexing_url)
     app.state.doc_store = DocStoreClient(settings.doc_store_url)
+    app.state.clustering = ClusteringClient(settings.clustering_url)  # optional cluster re-ranking
     logger.info(
-        "%s v%s ready (representation=%s, indexing=%s, doc_store=%s)",
+        "%s v%s ready (representation=%s, indexing=%s, doc_store=%s, clustering=%s)",
         settings.service_name, settings.version,
         settings.representation_url, settings.indexing_url, settings.doc_store_url,
+        settings.clustering_url,
     )
     yield
     app.state.representation.close()
     app.state.indexing.close()
     app.state.doc_store.close()
+    app.state.clustering.close()
     logger.info("%s shutting down", settings.service_name)
 
 

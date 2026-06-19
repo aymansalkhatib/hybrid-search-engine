@@ -27,6 +27,7 @@ from app.clients import ServiceClient
 from app.config import settings
 from app.routers import (
     catalog,
+    clustering,
     docstore,
     evaluation,
     indexing,
@@ -53,12 +54,14 @@ async def lifespan(app: FastAPI):
     app.state.query_refinement = ServiceClient(settings.query_refinement_url)
     app.state.evaluation = ServiceClient(settings.evaluation_url)
     app.state.doc_store = ServiceClient(settings.doc_store_url)
+    app.state.clustering = ServiceClient(settings.clustering_url)
     logger.info("%s v%s started", settings.service_name, settings.version)
     yield
     for client in (app.state.preprocessing, app.state.indexing,
                    app.state.representation, app.state.retrieval,
                    app.state.query_refinement,
-                   app.state.evaluation, app.state.doc_store):
+                   app.state.evaluation, app.state.doc_store,
+                   app.state.clustering):
         client.close()
     logger.info("%s shutting down", settings.service_name)
 
@@ -80,6 +83,7 @@ app.include_router(representation.router)
 app.include_router(retrieval.router)
 app.include_router(refinement.router)
 app.include_router(evaluation.router)
+app.include_router(clustering.router)
 app.include_router(docstore.router)
 
 

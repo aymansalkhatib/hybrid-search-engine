@@ -35,14 +35,16 @@ class RetrievalClient:
             return False
 
     def search(
-        self, *, dataset: str, spec: EvalRunSpec, query: str, top_k: int
+        self, *, dataset: str, spec: EvalRunSpec, query: str, top_k: int,
+        cluster_rerank: bool = False,
     ) -> tuple[list[Scored], Optional[str], float]:
         """Run one query with the run's model config → ``([(doc_id, score)], mode, took_ms)``.
 
         ``took_ms`` is the retrieval-service's own measured search time (server-side, so it
         is a fair per-query latency regardless of how many queries we issue concurrently).
-        Raises ``httpx.HTTPStatusError`` for a non-2xx (e.g. 404 = model not built), which
-        the evaluator uses to fail just that run cleanly.
+        ``cluster_rerank`` enables the extra-feature cluster re-ranking for the with/without
+        comparison. Raises ``httpx.HTTPStatusError`` for a non-2xx (e.g. 404 = model not
+        built), which the evaluator uses to fail just that run cleanly.
         """
         req = SearchRequest(
             dataset=dataset,
@@ -53,6 +55,7 @@ class RetrievalClient:
             b=spec.b,
             hybrid=spec.hybrid,
             with_text=False,
+            cluster_rerank=cluster_rerank,
         )
         resp = self._client.post("/search", json=req.model_dump(mode="json"))
         resp.raise_for_status()
