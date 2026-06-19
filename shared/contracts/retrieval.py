@@ -82,6 +82,9 @@ class SearchRequest(BaseModel):
     # a toggleable stage, so its before/after effect is evaluable. No-op (falls back to
     # the base ranking) if no clustering is built for the dataset.
     cluster_rerank: bool = Field(default=False, description="Re-rank so candidates in the query's cluster come first")
+    # Extra feature (§11): topic-based re-ranking — float candidates sharing the query's
+    # dominant LDA topic to the top. No-op (base ranking) if no topic model is built.
+    topic_rerank: bool = Field(default=False, description="Re-rank so candidates in the query's dominant topic come first")
 
     @model_validator(mode="after")
     def _check(self) -> "SearchRequest":

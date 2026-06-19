@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from app.config import settings
 from app.domain.cluster_rerank import cluster_rerank
 from app.domain.hybrid import parallel_search, serial_search
+from app.domain.topic_rerank import topic_rerank
 from shared.contracts import (
     BooleanSearchHit,
     BooleanSearchRequest,
@@ -90,8 +91,9 @@ def search(req: SearchRequest, request: Request) -> SearchResponse:
             ),
         )
 
-    # Cluster re-ranking reorders a candidate POOL, so retrieve deeper than top_k when on.
-    retrieve_k = min(max(req.top_k * 5, 50), 200) if req.cluster_rerank else req.top_k
+    # Cluster/topic re-ranking reorders a candidate POOL, so retrieve deeper than top_k.
+    do_rerank = req.cluster_rerank or req.topic_rerank
+    retrieve_k = min(max(req.top_k * 5, 50), 200) if do_rerank else req.top_k
 
     t0 = time.perf_counter()
     try:
@@ -124,24 +126,34 @@ def search(req: SearchRequest, request: Request) -> SearchResponse:
             detail=f"representation-service error at {settings.representation_url}: {exc}",
         ) from exc
 
-    # Cluster-based re-ranking (extra feature): assign the query + pool to clusters and
-    # float same-cluster candidates to the top. Needs the pool's original texts, which
-    # we then reuse for display. Falls back to the base ranking if clustering is down or
-    # not built — the feature is optional and must never break a search.
+    # Cluster/topic re-ranking (extra features): float candidates sharing the query's
+    # cluster / dominant topic to the top of the pool. Both need the pool's original
+    # texts, which we fetch once and reuse for display. Each falls back to the current
+    # ranking if its service is down or not built — optional, never breaks a search.
     text_cache: dict[str, str] = {}
-    if req.cluster_rerank and results:
+    if do_rerank and results:
         try:
             text_cache = state.doc_store.fetch_originals(dataset_id, [d for d, _ in results])
         except httpx.HTTPError:
             text_cache = {}
-        try:
-            results = cluster_rerank(
-                results=results, query=req.query, texts=text_cache,
-                client=state.clustering, dataset=dataset_id, top_k=req.top_k,
-            )
-            mode = f"{mode}+cluster" if mode else "cluster"
-        except httpx.HTTPError:
-            results = results[:req.top_k]  # clustering unavailable/not built → base ranking
+        if req.cluster_rerank:
+            try:
+                results = cluster_rerank(
+                    results=results, query=req.query, texts=text_cache,
+                    client=state.clustering, dataset=dataset_id, top_k=retrieve_k,
+                )
+                mode = f"{mode}+cluster" if mode else "cluster"
+            except httpx.HTTPError:
+                pass  # clustering unavailable/not built → keep current ranking
+        if req.topic_rerank:
+            try:
+                results = topic_rerank(
+                    results=results, query=req.query, texts=text_cache,
+                    client=state.topic, dataset=dataset_id, top_k=retrieve_k,
+                )
+                mode = f"{mode}+topic" if mode else "topic"
+            except httpx.HTTPError:
+                pass  # topic model unavailable/not built → keep current ranking
     results = results[:req.top_k]
 
     # Show the ORIGINAL document text — read by id from the doc-store (graded path).

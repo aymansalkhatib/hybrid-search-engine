@@ -20,6 +20,7 @@ const state = {
   seMode: "parallel",  // hybrid mode
   seFusion: "rrf",     // parallel fusion method
   seBoolOp: "and",     // boolean (inverted-index) operator
+  seExtras: "basic",   // search pipeline: basic | extra (gates refine/cluster/topic)
   rfLast: null,        // last query-refinement response (for "search with refined")
   clPolling: null,     // clustering build job poller
   tpPolling: null,     // topic-model build job poller
@@ -805,10 +806,13 @@ async function runSearch() {
   if (!query) { toast("Enter a query", "err"); return; }
   const top_k = Number($("#seTopk").value) || 10;
 
+  // Extra features only apply in "Basic + extras" — the basic vs basic+extra switch.
+  const extrasOn = state.seExtras === "extra";
+
   // Optional pre-retrieval refinement (the §6 "with vs without" toggle): refine the
   // raw query, then search with the refined one. Applies to every search mode.
   $("#seRefineNote").hidden = true;
-  if ($("#seRefine").checked) {
+  if (extrasOn && $("#seRefine").checked) {
     const ref = await refineQuery(query);
     if (ref) { query = ref.refined || query; showRefineNote(ref); }
   }
@@ -828,7 +832,8 @@ async function runSearch() {
     dataset: state.dataset, model: state.seModel, query, with_text: true,
     top_k,
     k1: Number($("#seK1").value), b: Number($("#seB").value),
-    cluster_rerank: $("#seCluster").checked,
+    cluster_rerank: extrasOn && $("#seCluster").checked,
+    topic_rerank: extrasOn && $("#seTopic").checked,
   };
   if (state.seModel === "hybrid") {
     if (state.seMode === "parallel") {
@@ -912,6 +917,13 @@ function wireSearch() {
     const b = e.target.closest(".seg-btn"); if (!b) return;
     $$("#seBoolOp .seg-btn").forEach((x) => x.classList.remove("active")); b.classList.add("active");
     state.seBoolOp = b.dataset.op;
+  });
+  // basic vs basic+extra master switch — shows/hides the extra-feature rows
+  $("#seExtras").addEventListener("click", (e) => {
+    const b = e.target.closest(".seg-btn"); if (!b) return;
+    $$("#seExtras .seg-btn").forEach((x) => x.classList.remove("active")); b.classList.add("active");
+    state.seExtras = b.dataset.x;
+    $("#seExtraRows").hidden = state.seExtras !== "extra";
   });
   // bm25 sliders
   $("#seK1").addEventListener("input", (e) => { $("#seK1v").textContent = Number(e.target.value).toFixed(1); });
@@ -1117,6 +1129,7 @@ async function runEvaluation() {
     };
   }
   if ($("#evCluster").checked) payload.cluster_rerank = true;
+  if ($("#evTopic").checked) payload.topic_rerank = true;
 
   const r = await api("evaluation", "evaluate", { method: "POST", json: payload });
   if (!r.ok) {
@@ -1651,6 +1664,11 @@ function wireEvaluation() {
     const lbl = $("#evLabel");
     if (e.target.checked && lbl.value.trim() === "baseline") lbl.value = "with-clustering";
     else if (!e.target.checked && lbl.value.trim() === "with-clustering") lbl.value = "baseline";
+  });
+  $("#evTopic").addEventListener("change", (e) => {
+    const lbl = $("#evLabel");
+    if (e.target.checked && lbl.value.trim() === "baseline") lbl.value = "with-topics";
+    else if (!e.target.checked && lbl.value.trim() === "with-topics") lbl.value = "baseline";
   });
   $("#evReports").addEventListener("click", (e) => {
     const b = e.target.closest("[data-evact]");

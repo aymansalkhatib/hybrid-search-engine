@@ -38,8 +38,9 @@ class Settings(BaseSettings):
     # Optional — only used when an evaluation requests query refinement (with/without
     # comparison). Defaults to localhost so the service still runs standalone.
     query_refinement_url: str = Field(default="http://localhost:8005", validation_alias="QUERY_REFINEMENT_URL")
-    # Only used to preflight a with-clustering run; retrieval does the actual re-ranking.
+    # Only used to preflight with-clustering / with-topics runs; retrieval does the re-ranking.
     clustering_url: str = Field(default="http://localhost:8008", validation_alias="CLUSTERING_URL")
+    topic_url: str = Field(default="http://localhost:8009", validation_alias="TOPIC_URL")
 
     # Offline-eval throughput: how many search requests to issue concurrently. Bounded —
     # the representation-service does the per-query scoring, so this trades its CPU for

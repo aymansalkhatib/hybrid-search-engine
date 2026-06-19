@@ -36,7 +36,7 @@ class RetrievalClient:
 
     def search(
         self, *, dataset: str, spec: EvalRunSpec, query: str, top_k: int,
-        cluster_rerank: bool = False,
+        cluster_rerank: bool = False, topic_rerank: bool = False,
     ) -> tuple[list[Scored], Optional[str], float]:
         """Run one query with the run's model config → ``([(doc_id, score)], mode, took_ms)``.
 
@@ -56,6 +56,7 @@ class RetrievalClient:
             hybrid=spec.hybrid,
             with_text=False,
             cluster_rerank=cluster_rerank,
+            topic_rerank=topic_rerank,
         )
         resp = self._client.post("/search", json=req.model_dump(mode="json"))
         resp.raise_for_status()

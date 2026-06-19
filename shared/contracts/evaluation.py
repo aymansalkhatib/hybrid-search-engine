@@ -95,6 +95,14 @@ class EvaluateRequest(BaseModel):
             "and label the report (e.g. 'with-clustering') to measure the before/after effect."
         ),
     )
+    topic_rerank: bool = Field(
+        default=False,
+        description=(
+            "Apply topic-based re-ranking to every run (extra feature §11): candidates sharing "
+            "the query's dominant LDA topic are floated to the top. Label the report "
+            "(e.g. 'with-topics') and compare to 'baseline' for the before/after effect."
+        ),
+    )
     force: bool = Field(default=False, description="Re-run and overwrite even if a report with this label exists")
 
 

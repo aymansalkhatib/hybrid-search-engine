@@ -153,6 +153,22 @@ def evaluate(req: EvaluateRequest, request: Request) -> JobStatus:
                     "else a with-clustering run would just equal the baseline"
                 ),
             )
+    # Topic re-ranking likewise requires a built topic model when this run asks for it.
+    if req.topic_rerank:
+        try:
+            tp = httpx.get(f"{settings.topic_url}/status", params={"dataset": dataset_id}, timeout=5.0)
+            built = tp.status_code == 200 and tp.json().get("built")
+        except httpx.HTTPError:
+            built = False
+        if not built:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"no topic model built for '{dataset_id}' (topic-service at "
+                    f"{settings.topic_url}); build it first via the Topics tab, "
+                    "else a with-topics run would just equal the baseline"
+                ),
+            )
 
     runs = req.runs or _default_runs()
     metrics = req.metrics or list(DEFAULT_METRICS)
@@ -167,6 +183,7 @@ def evaluate(req: EvaluateRequest, request: Request) -> JobStatus:
     refinement = state.refinement
     refine_options = req.refine
     cluster_rerank = req.cluster_rerank
+    topic_rerank = req.topic_rerank
     concurrency = settings.concurrency
     label = req.label
 
@@ -193,6 +210,7 @@ def evaluate(req: EvaluateRequest, request: Request) -> JobStatus:
             refine_options=refine_options,
             refinement=refinement,
             cluster_rerank=cluster_rerank,
+            topic_rerank=topic_rerank,
         )
         store.save(report)
         if sidecar is not None:

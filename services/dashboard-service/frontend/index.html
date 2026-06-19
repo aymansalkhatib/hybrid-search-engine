@@ -436,17 +436,32 @@
           </div>
 
           <div class="opt-row">
-            <span class="opt-label">Refine</span>
-            <label class="switch sm"><input type="checkbox" id="seRefine"><span></span>refine query first</label>
-            <label class="switch sm"><input type="checkbox" id="seRefCorrect" checked><span></span>correct</label>
-            <label class="switch sm"><input type="checkbox" id="seRefExpand"><span></span>expand synonyms</label>
-            <span class="opt-note">runs query-refinement before retrieval — toggle to compare results <b>with vs without</b> refinement</span>
+            <span class="opt-label">Pipeline</span>
+            <div class="seg" id="seExtras">
+              <button class="seg-btn active" data-x="basic">Basic</button>
+              <button class="seg-btn" data-x="extra">Basic + extras</button>
+            </div>
+            <span class="opt-note">the extra features (refine · cluster · topic) only apply in <b>Basic + extras</b> — flip to compare basic vs basic+extra</span>
           </div>
 
-          <div class="opt-row">
-            <span class="opt-label">Cluster</span>
-            <label class="switch sm"><input type="checkbox" id="seCluster"><span></span>cluster re-rank</label>
-            <span class="opt-note">floats results in the query's document cluster to the top (needs a built clustering) — another <b>with vs without</b> toggle</span>
+          <div id="seExtraRows" hidden>
+            <div class="opt-row">
+              <span class="opt-label">Refine</span>
+              <label class="switch sm"><input type="checkbox" id="seRefine"><span></span>refine query first</label>
+              <label class="switch sm"><input type="checkbox" id="seRefCorrect" checked><span></span>correct</label>
+              <label class="switch sm"><input type="checkbox" id="seRefExpand"><span></span>expand synonyms</label>
+              <span class="opt-note">runs query-refinement before retrieval</span>
+            </div>
+            <div class="opt-row">
+              <span class="opt-label">Cluster</span>
+              <label class="switch sm"><input type="checkbox" id="seCluster"><span></span>cluster re-rank</label>
+              <span class="opt-note">floats results in the query's document cluster to the top (needs a built clustering)</span>
+            </div>
+            <div class="opt-row">
+              <span class="opt-label">Topic</span>
+              <label class="switch sm"><input type="checkbox" id="seTopic"><span></span>topic re-rank</label>
+              <span class="opt-note">floats results sharing the query's dominant topic to the top (needs a built topic model)</span>
+            </div>
           </div>
 
           <div class="opt-row">
@@ -695,6 +710,12 @@
             <span class="opt-label">Cluster</span>
             <label class="switch sm"><input type="checkbox" id="evCluster"><span></span>cluster re-rank</label>
             <span class="opt-note">applies cluster-based re-ranking to every run (needs a built clustering) — label it (e.g. <span class="mono">with-clustering</span>) and compare to <span class="mono">baseline</span></span>
+          </div>
+
+          <div class="opt-row">
+            <span class="opt-label">Topic</span>
+            <label class="switch sm"><input type="checkbox" id="evTopic"><span></span>topic re-rank</label>
+            <span class="opt-note">applies topic-based re-ranking to every run (needs a built topic model) — label it (e.g. <span class="mono">with-topics</span>) and compare to <span class="mono">baseline</span></span>
           </div>
 
           <div class="opt-row">
