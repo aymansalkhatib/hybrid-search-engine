@@ -28,8 +28,9 @@ class Settings(BaseSettings):
     query_refinement_url: str
     evaluation_url: str
     doc_store_url: str
-    # Extra feature (§11) — default so the gateway still boots if it's not configured.
+    # Extra features (§11) — defaults so the gateway still boots if they're not configured.
     clustering_url: str = "http://clustering-service:8008"
+    topic_url: str = "http://topic-service:8009"
 
     @property
     def datasets(self) -> list[str]:

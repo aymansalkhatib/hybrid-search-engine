@@ -36,6 +36,7 @@ from app.routers import (
     refinement,
     representation,
     retrieval,
+    topic,
 )
 from shared.contracts import HealthResponse, ServiceInfo
 from shared.ir_common.errors import install_error_handlers
@@ -55,13 +56,14 @@ async def lifespan(app: FastAPI):
     app.state.evaluation = ServiceClient(settings.evaluation_url)
     app.state.doc_store = ServiceClient(settings.doc_store_url)
     app.state.clustering = ServiceClient(settings.clustering_url)
+    app.state.topic = ServiceClient(settings.topic_url)
     logger.info("%s v%s started", settings.service_name, settings.version)
     yield
     for client in (app.state.preprocessing, app.state.indexing,
                    app.state.representation, app.state.retrieval,
                    app.state.query_refinement,
                    app.state.evaluation, app.state.doc_store,
-                   app.state.clustering):
+                   app.state.clustering, app.state.topic):
         client.close()
     logger.info("%s shutting down", settings.service_name)
 
@@ -84,6 +86,7 @@ app.include_router(retrieval.router)
 app.include_router(refinement.router)
 app.include_router(evaluation.router)
 app.include_router(clustering.router)
+app.include_router(topic.router)
 app.include_router(docstore.router)
 
 

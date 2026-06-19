@@ -89,6 +89,17 @@ from shared.contracts.clustering import (
     ClusterStats,
     ClusterStatusResponse,
 )
+from shared.contracts.topic import (
+    InferRequest,
+    InferResponse,
+    TopicBuildRequest,
+    TopicDeleteResult,
+    TopicInfo,
+    TopicInference,
+    TopicStats,
+    TopicStatusResponse,
+    TopicWeight,
+)
 from shared.contracts.evaluation import (
     DEFAULT_METRICS,
     EvalModel,
@@ -193,6 +204,15 @@ __all__ = [
     "ClusterPoint",
     "ClusterStats",
     "ClusterStatusResponse",
+    "InferRequest",
+    "InferResponse",
+    "TopicBuildRequest",
+    "TopicDeleteResult",
+    "TopicInfo",
+    "TopicInference",
+    "TopicStats",
+    "TopicStatusResponse",
+    "TopicWeight",
     "DEFAULT_METRICS",
     "EvalModel",
     "EvalRunSpec",

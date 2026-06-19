@@ -137,6 +137,29 @@ services:
       - ir-net
     restart: unless-stopped
 
+  topic-service:
+    build:
+      context: .
+      dockerfile: services/topic-service/Dockerfile
+    image: ir-project/topic-service
+    container_name: ir-topic
+    env_file:
+      - path: .env
+        required: true
+    # Internal-only: reachable on the compose network at topic-service:8009.
+    # Not published to the host — the API Gateway is the single external door (§4).
+    expose:
+      - "8009"
+    # Heavy artifact (fitted CountVectorizer + LDA) persists on the host volume.
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      doc-store-service:          # models the raw docs stored in the doc-store
+        condition: service_healthy
+    networks:
+      - ir-net
+    restart: unless-stopped
+
   query-refinement-service:
     build:
       context: .
@@ -276,6 +299,7 @@ services:
       - retrieval-service
       - query-refinement-service
       - clustering-service
+      - topic-service
       - evaluation-service
       - doc-store-service
     networks:

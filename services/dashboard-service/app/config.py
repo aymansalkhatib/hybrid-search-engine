@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     evaluation_url: str
     doc_store_url: str
     clustering_url: str = Field(default="http://clustering-service:8008", validation_alias="CLUSTERING_URL")
+    topic_url: str = Field(default="http://topic-service:8009", validation_alias="TOPIC_URL")
 
     # ---- host-published ports (browser-facing deep links) ----
     api_gateway_port: int = Field(default=8000, validation_alias="API_GATEWAY_PORT")
@@ -46,6 +47,7 @@ class Settings(BaseSettings):
     evaluation_port: int = Field(default=8006, validation_alias="EVALUATION_PORT")
     doc_store_port: int = Field(default=8007, validation_alias="DOC_STORE_PORT")
     clustering_port: int = Field(default=8008, validation_alias="CLUSTERING_PORT")
+    topic_port: int = Field(default=8009, validation_alias="TOPIC_PORT")
     mongo_express_port: int = Field(default=8081, validation_alias="MONGO_EXPRESS_PORT")
     dashboard_port: int = Field(default=8090, validation_alias="DASHBOARD_PORT")
 

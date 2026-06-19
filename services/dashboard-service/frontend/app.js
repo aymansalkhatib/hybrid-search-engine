@@ -22,6 +22,7 @@ const state = {
   seBoolOp: "and",     // boolean (inverted-index) operator
   rfLast: null,        // last query-refinement response (for "search with refined")
   clPolling: null,     // clustering build job poller
+  tpPolling: null,     // topic-model build job poller
   evReportId: null,    // evaluation report currently in view
   evCompareId: null,   // evaluation report to overlay (before/after compare)
   evReports: [],       // cached saved-reports list
@@ -1858,6 +1859,132 @@ function wireClustering() {
   $("#clAssignText").addEventListener("keydown", (e) => e.key === "Enter" && clusterAssign());
 }
 
+/* ============================================================
+   TOPIC DETECTION (extra feature) — build · topics · infer
+   Talks to the topic-service via the console proxy.
+   ============================================================ */
+async function loadTopicStatus() {
+  $("#tpDsBadge").textContent = state.dataset || "—";
+  const r = await api("topic", "status", { query: { dataset: state.dataset } });
+  if (!r.ok) return;
+  const d = r.data;
+  if (d.active_job && d.active_job.job_id) pollTopicJob(d.active_job.job_id);
+  if (d.built && d.stats) { renderTopicStats(d.stats); renderTopics(d.stats.topics); }
+  else {
+    $("#tpSummary").hidden = true;
+    $("#tpTopics").className = "result-empty"; $("#tpTopics").textContent = "No topic model yet — build one above.";
+  }
+}
+
+function renderTopicStats(s) {
+  const el = $("#tpSummary"); el.hidden = false;
+  const px = s.perplexity == null ? "—" : Number(s.perplexity).toFixed(1);
+  el.innerHTML = `modelled <b>${fmt(s.num_docs)}</b> docs into <b>${s.n_topics}</b> topics · perplexity <b>${px}</b> · features ${fmt(s.max_features)}`;
+}
+
+function renderTopics(topics) {
+  const box = $("#tpTopics"); box.className = "";
+  const maxSize = Math.max(...topics.map((t) => t.size), 1);
+  box.innerHTML = `<div class="tp-grid">${topics.map((t) => {
+    const maxW = Math.max(...(t.weights.length ? t.weights : [1]));
+    const terms = t.top_terms.map((term, i) => {
+      const w = t.weights[i] || 0;
+      return `<div class="tp-term"><span class="tp-tname">${esc(term)}</span><span class="tp-tbar"><i style="width:${Math.round(100 * w / maxW)}%"></i></span></div>`;
+    }).join("");
+    return `<div class="tp-card">
+      <div class="tp-head"><b>#${t.topic_id}</b> <span class="tp-label">${esc(t.label)}</span>
+        <span class="tp-size" title="docs whose dominant topic is this">${fmt(t.size)} docs · ${Math.round(100 * t.size / maxSize)}%</span></div>
+      <div class="tp-terms">${terms}</div>
+    </div>`;
+  }).join("")}</div>`;
+}
+
+async function topicBuild() {
+  const payload = {
+    dataset: state.dataset,
+    n_topics: Number($("#tpK").value) || 10,
+    max_docs: Number($("#tpMaxDocs").value) || 20000,
+    max_features: Number($("#tpMaxFeat").value) || 20000,
+    max_iter: Number($("#tpMaxIter").value) || 10,
+    max_df: Number($("#tpMaxDf").value) || 0.5,
+    force: $("#tpForce").checked,
+  };
+  const r = await api("topic", "build", { method: "POST", json: payload });
+  if (!r.ok) { toast(`topic build failed: ${errMsg(r)}`, "err", 6000); return; }
+  const job = r.data;
+  if (["skipped", "succeeded", "failed"].includes(job.state)) { handleTopicDone(job); return; }
+  toast(`Modelling ${state.dataset} into ${payload.n_topics} topics…`, "info", 4000);
+  pollTopicJob(job.job_id);
+}
+
+function resetTopicProgress() {
+  if (state.tpPolling) { clearInterval(state.tpPolling); state.tpPolling = null; }
+  $("#tpProg").hidden = true; $("#tpProgLbl").hidden = true; $("#tpBuild").disabled = false;
+}
+
+async function handleTopicDone(job) {
+  resetTopicProgress();
+  toast(`Topic model ${job.state}${job.error ? " — " + job.error : ""}`, job.state === "failed" ? "err" : "ok", 6000);
+  loadTopicStatus();
+}
+
+function pollTopicJob(jobId) {
+  resetTopicProgress();
+  const prog = $("#tpProg"), bar = $("#tpBar"), lbl = $("#tpProgLbl");
+  prog.hidden = false; lbl.hidden = false; $("#tpBuild").disabled = true;
+  let fails = 0;
+  state.tpPolling = setInterval(async () => {
+    const r = await api("topic", `jobs/${jobId}`);
+    if (!r.ok) { if (r.status === 404 || ++fails >= 5) { resetTopicProgress(); loadTopicStatus(); } return; }
+    fails = 0;
+    const j = r.data;
+    const det = j.percent != null && j.percent > 0;
+    prog.classList.toggle("indet", !det);
+    if (det) bar.style.width = `${j.percent}%`;
+    const counts = j.total ? `(${fmt(j.processed)}/${fmt(j.total)})` : `(${fmt(j.processed)})`;
+    lbl.querySelector(".msg").textContent = `${j.message || j.state} ${counts}`;
+    lbl.querySelector(".pct").innerHTML = det ? `${j.percent}%` : `<span class="spinner"></span>`;
+    if (["succeeded", "failed", "skipped"].includes(j.state)) handleTopicDone(j);
+  }, 1200);
+}
+
+async function topicInfer() {
+  const text = $("#tpInferText").value.trim();
+  const out = $("#tpInferOut");
+  if (!text) { toast("Enter a query", "err"); return; }
+  out.className = "loading"; out.innerHTML = `<span class="spinner"></span> inferring…`;
+  const r = await api("topic", "infer", { method: "POST", json: { dataset: state.dataset, texts: [text] } });
+  if (!r.ok) { out.className = "result-empty"; out.textContent = `Error: ${errMsg(r)} (build the topic model first?)`; return; }
+  const res = r.data.results[0];
+  const sorted = [...res.distribution].sort((a, b) => b.weight - a.weight);
+  // Confidence from the mixture shape: a strong, clearly-leading topic means the query
+  // sits inside the corpus's themes; a low or tied top topic means it's out-of-distribution
+  // (e.g. a fish/biology query on a tech-heavy corpus matched only on one shared word).
+  const w1 = sorted[0]?.weight ?? 0, w2 = sorted[1]?.weight ?? 0, gap = w1 - w2;
+  let conf, cls;
+  if (w1 >= 0.5 && gap >= 0.15) { conf = "strong match"; cls = "strong"; }
+  else if (w1 >= 0.3 && gap >= 0.08) { conf = "moderate match"; cls = "mod"; }
+  else { conf = "low confidence — query likely outside the corpus's topics"; cls = "low"; }
+  const dist = sorted.slice(0, 6);
+  const maxW = Math.max(...dist.map((d) => d.weight), 0.0001);
+  out.className = "";
+  out.innerHTML = `
+    <div class="rf-row"><span class="rf-k">topic</span>
+      <div class="norm-box">#${res.dominant_topic} · ${esc(res.top_terms.slice(0, 4).join(", "))}</div></div>
+    <div class="rf-row"><span class="rf-k">confidence</span>
+      <span class="tp-conf ${cls}">${esc(conf)}</span>
+      <span class="muted">top ${(w1 * 100).toFixed(0)}%${w2 ? ` · 2nd ${(w2 * 100).toFixed(0)}%` : ""}</span></div>
+    <div class="rf-sec"><h4 class="rf-h">Topic mixture</h4>
+      ${dist.map((d) => `<div class="tp-term"><span class="tp-tname">#${d.topic_id} ${esc(d.label)}</span><span class="tp-tbar"><i style="width:${Math.round(100 * d.weight / maxW)}%"></i></span><span class="tp-pct">${(d.weight * 100).toFixed(1)}%</span></div>`).join("")}
+    </div>`;
+}
+
+function wireTopic() {
+  $("#tpBuild").addEventListener("click", topicBuild);
+  $("#tpInferBtn").addEventListener("click", topicInfer);
+  $("#tpInferText").addEventListener("keydown", (e) => e.key === "Enter" && topicInfer());
+}
+
 function wireNav() {
   $$("#nav .nav-item").forEach((btn) => btn.addEventListener("click", () => {
     $$("#nav .nav-item").forEach((b) => b.classList.remove("active"));
@@ -1875,6 +2002,7 @@ function onViewEnter(view) {
   if (view === "representation") loadRepresentation();
   if (view === "search") seSyncControls();
   if (view === "clustering") loadClusterStatus();
+  if (view === "topic") loadTopicStatus();
   if (view === "evaluation") { initEvalControls(); loadEvalReports(); evResumeRunningJob(); }
   if (view === "docstore") { browseDocs(true); browseQueries(true); }
   if (view === "services") renderServices();
@@ -1917,6 +2045,9 @@ function wireActions() {
 
   // clustering (extra feature)
   wireClustering();
+
+  // topic detection (extra feature)
+  wireTopic();
 
   // search
   wireSearch();
