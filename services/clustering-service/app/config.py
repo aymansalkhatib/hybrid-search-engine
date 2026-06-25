@@ -1,8 +1,8 @@
 """Clustering-service configuration (env-driven, 12-factor).
 
-Like the representation-service, clustering reads the corpus from the **doc-store** and
-normalises it via the **preprocessing-service** — never touching another service's
-internals. The fitted clustering is persisted under the artifacts volume
+Like the representation-service, clustering reads the corpus from the **doc-store**, but
+vectorises the raw text itself (TF-IDF with English stop-words) — no preprocessing-service
+dependency. The fitted clustering is persisted under the artifacts volume
 (``data/artifacts/clustering``) so it survives restarts and feeds the dashboard plots.
 """
 

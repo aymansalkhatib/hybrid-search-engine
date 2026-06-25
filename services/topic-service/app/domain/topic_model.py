@@ -1,14 +1,18 @@
 """Core topic-modelling logic — framework-independent (no FastAPI here).
 
 Offline pipeline: stream the **raw** corpus → CountVectorizer (lowercase + English
-stop-words) → Latent Dirichlet Allocation. The vectoriser tokenises raw text itself, so
-the model is self-contained (no preprocessing-service) and a new query is *inferred*
-with the same analyser used at fit time.
+stop-words + min_df/max_df noise filter) → Latent Dirichlet Allocation. The vectoriser
+tokenises raw text itself, so the model is self-contained (no preprocessing-service) and a
+new query is *inferred* with the same analyser used at fit time. LDA uses **batch**
+variational Bayes: the corpus is capped (``max_docs``) and loaded in memory, so batch
+converges to sharper topics than the online (mini-batch) learner, which is meant for
+streaming corpora that don't fit in RAM.
 
 The fitted :class:`TopicModel` keeps what the online endpoints need without a re-fit:
 each topic's top terms + weights (the topic charts), the corpus's dominant-topic sizes,
-the LDA perplexity (fit quality), and the vectoriser + LDA so a query's topic mixture
-can be inferred (transform → LDA.transform).
+the LDA perplexity (fit quality), and the vectoriser + LDA so a query's topic mixture can
+be inferred. A query with no in-vocabulary terms (empty/stop-words-only) has no dominant
+topic (reported as ``-1``) so the re-ranker can treat it as a no-op.
 """
 
 from __future__ import annotations
@@ -24,12 +28,17 @@ from sklearn.feature_extraction.text import CountVectorizer
 
 logger = logging.getLogger("topic-service")
 
+# Bump when the persisted shape changes so stale pickles are auto-rebuilt (see TopicStore.load).
+SCHEMA_VERSION = 2
+
 _TOP_TERMS = 12
+NO_TOPIC = -1   # a text with no in-vocabulary terms has no dominant topic
 
 
 @dataclass
 class TopicModel:
     dataset_id: str
+    schema_version: int
     n_topics: int
     num_docs: int
     max_features: int
@@ -42,18 +51,26 @@ class TopicModel:
     lda: LatentDirichletAllocation
 
     def label(self, topic_id: int) -> str:
+        if topic_id < 0:
+            return "—"
         terms = self.top_terms[topic_id]
         return " / ".join(terms[:2]) if terms else f"topic {topic_id}"
 
+    def terms_for(self, topic_id: int) -> list[str]:
+        return self.top_terms[topic_id] if topic_id >= 0 else []
+
     def infer(self, texts: list[str]) -> list[tuple[int, list[float]]]:
-        """Topic mixture per text → ``(dominant_topic, [weight per topic])``."""
-        dist = self.lda.transform(self.vectorizer.transform(texts))
-        # Normalise each row to a proper distribution (LDA rows already ~sum to 1).
+        """Topic mixture per text → ``(dominant_topic, [weight per topic])`` (dominant -1 if no in-vocab terms)."""
+        counts = self.vectorizer.transform(texts)
+        nnz = counts.getnnz(axis=1)
+        dist = self.lda.transform(counts)
         out: list[tuple[int, list[float]]] = []
-        for row in dist:
+        for i, row in enumerate(dist):
+            # Normalise each row to a proper distribution (LDA rows already ~sum to 1).
             total = float(row.sum()) or 1.0
             probs = (row / total).tolist()
-            out.append((int(np.argmax(row)), [round(p, 4) for p in probs]))
+            dominant = int(np.argmax(row)) if nnz[i] > 0 else NO_TOPIC
+            out.append((dominant, [round(p, 4) for p in probs]))
         return out
 
 
@@ -90,9 +107,9 @@ def build_topics(
     vectorizer = CountVectorizer(max_features=max_features, stop_words="english", min_df=2, max_df=max_df)
     matrix = vectorizer.fit_transform(texts)
 
-    logger.info("fitting LDA with %d topics (max_iter=%d)", n_topics, max_iter)
+    logger.info("fitting LDA with %d topics (max_iter=%d, batch)", n_topics, max_iter)
     lda = LatentDirichletAllocation(
-        n_components=n_topics, max_iter=max_iter, learning_method="online",
+        n_components=n_topics, max_iter=max_iter, learning_method="batch",
         random_state=42, n_jobs=1,
     )
     doc_topic = lda.fit_transform(matrix)
@@ -116,6 +133,7 @@ def build_topics(
 
     return TopicModel(
         dataset_id=dataset_id,
+        schema_version=SCHEMA_VERSION,
         n_topics=n_topics,
         num_docs=len(texts),
         max_features=max_features,

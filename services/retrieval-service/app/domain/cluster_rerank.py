@@ -41,6 +41,10 @@ def cluster_rerank(
         return results[:top_k]
 
     query_cluster = clusters[0]
+    if query_cluster < 0:
+        # The query has no in-vocabulary terms → no dominant cluster; re-ranking would just
+        # float an arbitrary group, so keep the base ranking untouched.
+        return results[:top_k]
     doc_clusters = clusters[1:]
     same: list[Scored] = []
     other: list[Scored] = []

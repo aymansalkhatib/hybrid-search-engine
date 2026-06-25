@@ -94,9 +94,9 @@ def _submit_or_409(request: Request, key: str, fn):
 
 @router.post("/build", response_model=JobStatus, status_code=status.HTTP_202_ACCEPTED)
 def build(req: ClusterBuildRequest, request: Request) -> JobStatus:
-    """Start a background clustering build. The corpus is read from the doc-store and
-    normalised by the preprocessing-service, so the dataset must be **ingested** first.
-    **409** if not ingested or a build is already running; **503** if a dependency is down.
+    """Start a background clustering build. The **raw** corpus is read from the doc-store
+    (vectorised in-service — no preprocessing-service), so the dataset must be **ingested**
+    first. **409** if not ingested or a build is already running; **503** if a dependency is down.
     """
     dataset_id = _resolve_or_400(req.dataset)
     state = request.app.state

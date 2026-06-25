@@ -184,7 +184,7 @@ def infer(req: InferRequest, request: Request) -> InferResponse:
         results.append(TopicInference(
             text=text,
             dominant_topic=dominant,
-            top_terms=model.top_terms[dominant],
+            top_terms=model.terms_for(dominant),   # [] when the text has no in-vocab terms (dominant == -1)
             distribution=[TopicWeight(topic_id=t, label=model.label(t), weight=w) for t, w in enumerate(dist)],
         ))
     return InferResponse(dataset_id=model.dataset_id, n_topics=model.n_topics, results=results)

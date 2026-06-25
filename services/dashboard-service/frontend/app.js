@@ -798,6 +798,8 @@ function seSyncControls() {
     $("#seParallel").hidden = state.seMode !== "parallel";
     $("#seSerial").hidden = state.seMode !== "serial";
   }
+  // Per-component weight inputs only matter for parallel + weighted fusion.
+  $("#seWeights").hidden = !(state.seModel === "hybrid" && state.seMode === "parallel" && state.seFusion === "weighted");
 }
 
 async function runSearch() {
@@ -840,6 +842,8 @@ async function runSearch() {
       const comps = seComponents();
       if (comps.length < 2) { toast("Pick at least 2 components for parallel hybrid", "err", 4000); return; }
       payload.hybrid = { mode: "parallel", components: comps, fusion: state.seFusion, rrf_k: 60 };
+      // Weighted fusion: send a weight per component, aligned with `comps` order (the contract requires equal length).
+      if (state.seFusion === "weighted") payload.hybrid.weights = comps.map((c) => Number($(`#seWeights [data-w="${c}"]`).value) || 0);
     } else {
       const first = $("#seFirst").value, rerank = $("#seRerank").value;
       if (first === rerank) { toast("Serial needs two different models", "err", 4000); return; }
@@ -911,7 +915,7 @@ function wireSearch() {
   $("#seFusion").addEventListener("click", (e) => {
     const b = e.target.closest(".seg-btn"); if (!b) return;
     $$("#seFusion .seg-btn").forEach((x) => x.classList.remove("active")); b.classList.add("active");
-    state.seFusion = b.dataset.f;
+    state.seFusion = b.dataset.f; seSyncControls();   // reveal/hide the weights row
   });
   $("#seBoolOp").addEventListener("click", (e) => {
     const b = e.target.closest(".seg-btn"); if (!b) return;
@@ -1078,7 +1082,15 @@ function evAddCustomRun() {
     const comps = $$("[data-evc]").filter((c) => c.checked).map((c) => c.dataset.evc);
     if (comps.length < 2) { toast("Parallel hybrid needs ≥ 2 components", "err", 4000); return; }
     const fusion = state.evFusion || "rrf";
-    specs = [{ label: `${fusion}(${comps.join("+")})`, model: "hybrid", hybrid: { mode: "parallel", components: comps, fusion, rrf_k: 60 } }];
+    const hybrid = { mode: "parallel", components: comps, fusion, rrf_k: 60 };
+    let wlabel = "";
+    if (fusion === "weighted") {
+      // Weight per component, aligned with `comps`; fold the weights into the label so
+      // two weighted runs with different weights stay distinct (and aren't de-duped).
+      hybrid.weights = comps.map((c) => Number($(`#evWeights [data-evw="${c}"]`).value) || 0);
+      wlabel = `[${hybrid.weights.join(",")}]`;
+    }
+    specs = [{ label: `${fusion}(${comps.join("+")})${wlabel}`, model: "hybrid", hybrid }];
   } else if (t === "serial") {
     const first = $("#evFirst").value, rerank = $("#evRerank").value;
     if (first === rerank) { toast("Serial hybrid needs two different models", "err", 4000); return; }
@@ -1639,8 +1651,13 @@ async function deleteEvalReport(rid) {
   await loadEvalReports();
 }
 
+function evSyncWeights() {
+  const w = $("#evWeights");
+  if (w) w.hidden = !(state.evRunType === "parallel" && (state.evFusion || "rrf") === "weighted");
+}
 function evSyncRunType() {
   $$(".ev-bt").forEach((el) => { el.hidden = el.dataset.bt !== state.evRunType; });
+  evSyncWeights();
 }
 
 // One-time-per-enter init of the builder controls (chips + metric chips + type rows).
@@ -1690,7 +1707,7 @@ function wireEvaluation() {
   $("#evFusion").addEventListener("click", (e) => {
     const b = e.target.closest(".seg-btn"); if (!b) return;
     $$("#evFusion .seg-btn").forEach((x) => x.classList.remove("active")); b.classList.add("active");
-    state.evFusion = b.dataset.f;
+    state.evFusion = b.dataset.f; evSyncWeights();   // reveal/hide the weights row
   });
   $("#evAddRun").addEventListener("click", evAddCustomRun);
   $("#evCustomRuns").addEventListener("click", (e) => {

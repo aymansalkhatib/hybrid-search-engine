@@ -40,6 +40,10 @@ def topic_rerank(
         return results[:top_k]
 
     query_topic = topics[0]
+    if query_topic < 0:
+        # The query has no in-vocabulary terms → no dominant topic; re-ranking would just
+        # float an arbitrary group, so keep the base ranking untouched.
+        return results[:top_k]
     doc_topics = topics[1:]
     same: list[Scored] = []
     other: list[Scored] = []

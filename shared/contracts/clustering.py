@@ -1,8 +1,9 @@
 """Contracts for the clustering-service — unsupervised document clustering (extra feature, §11).
 
-Clustering is an **offline** batch job: the corpus is streamed from the doc-store,
-normalized by the preprocessing-service, vectorised with TF-IDF and partitioned with
-(MiniBatch) KMeans. The fitted artifact is persisted so the online endpoints are cheap:
+Clustering is an **offline** batch job: the **raw** corpus is streamed from the doc-store,
+vectorised with TF-IDF (English stop-words, in-service — no preprocessing-service) and
+partitioned with (MiniBatch) KMeans. The fitted artifact is persisted so the online
+endpoints are cheap:
 list clusters (size + top terms), assign new text to its nearest cluster, and serve a
 2-D projection for the scatter plot. It's independent of the trained representations —
 it builds its own lexical vectors — so it works on any ingested dataset and is

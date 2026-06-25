@@ -13,7 +13,7 @@ import os
 import pickle
 from pathlib import Path
 
-from app.domain.topic_model import TopicModel
+from app.domain.topic_model import SCHEMA_VERSION, TopicModel
 from shared.ir_common.datasets import safe_id
 
 logger = logging.getLogger("topic-service")
@@ -47,10 +47,15 @@ class TopicStore:
             return None
         try:
             with open(path, "rb") as fh:
-                return pickle.load(fh)
+                model = pickle.load(fh)
         except Exception as exc:  # noqa: BLE001 — a stale/incompatible artifact shouldn't crash reads
             logger.warning("could not load topic model %s (%s); treating as absent", path.name, exc)
             return None
+        if getattr(model, "schema_version", 0) != SCHEMA_VERSION:
+            logger.warning("topic model %s is schema v%s (current v%s) — treating as absent so it rebuilds",
+                           path.name, getattr(model, "schema_version", 0), SCHEMA_VERSION)
+            return None
+        return model
 
     def delete(self, dataset_id: str) -> bool:
         path = self._path(dataset_id)

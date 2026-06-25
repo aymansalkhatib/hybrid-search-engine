@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="app.css?v=15" />
+  <link rel="stylesheet" href="app.css?v=16" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%94%8E%3C/text%3E%3C/svg%3E" />
 </head>
 <body>
@@ -513,6 +513,14 @@
                 <button class="seg-btn" data-f="weighted">Weighted</button>
               </div>
             </div>
+            <div class="opt-row" id="seWeights" hidden>
+              <span class="opt-label">Weights</span>
+              <label class="opt-field">BM25 <input type="number" class="input-num" data-w="bm25" value="1.0" min="0" step="0.1"></label>
+              <label class="opt-field">TF-IDF <input type="number" class="input-num" data-w="tfidf" value="1.0" min="0" step="0.1"></label>
+              <label class="opt-field">Word2Vec <input type="number" class="input-num" data-w="embedding" value="1.0" min="0" step="0.1"></label>
+              <label class="opt-field">BERT <input type="number" class="input-num" data-w="bert" value="1.0" min="0" step="0.1"></label>
+              <span class="opt-note">relative weight per component — only checked components count, scale is arbitrary (min-max normalized per model)</span>
+            </div>
             <div class="opt-row" id="seSerial" hidden>
               <span class="opt-label">First → Re-rank</span>
               <select id="seFirst" class="select sm"><option value="bm25">bm25</option><option value="tfidf">tfidf</option><option value="embedding">word2vec</option><option value="bert">bert</option></select>
@@ -669,6 +677,14 @@
                 <button class="seg-btn" data-f="weighted">Weighted</button>
               </div>
             </div>
+            <div class="opt-row" id="evWeights" hidden>
+              <span class="opt-label">Weights</span>
+              <label class="opt-field">BM25 <input type="number" class="input-num" data-evw="bm25" value="1.0" min="0" step="0.1"></label>
+              <label class="opt-field">TF-IDF <input type="number" class="input-num" data-evw="tfidf" value="1.0" min="0" step="0.1"></label>
+              <label class="opt-field">Word2Vec <input type="number" class="input-num" data-evw="embedding" value="1.0" min="0" step="0.1"></label>
+              <label class="opt-field">BERT <input type="number" class="input-num" data-evw="bert" value="1.0" min="0" step="0.1"></label>
+              <span class="opt-note">relative weight per component (weighted fusion) — added to each run's label so different weights stay distinct</span>
+            </div>
 
             <div class="opt-row ev-bt" data-bt="serial" hidden>
               <span class="opt-label">First → Re-rank</span>
@@ -807,6 +823,6 @@
   <!-- toasts -->
   <div class="toasts" id="toasts"></div>
 
-  <script src="app.js?v=15"></script>
+  <script src="app.js?v=16"></script>
 </body>
 </html>

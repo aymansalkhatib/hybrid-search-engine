@@ -1,7 +1,7 @@
 """Clustering service — unsupervised document clustering (extra feature, §11).
 
-Offline: ``POST /build`` streams the corpus from the doc-store through the
-preprocessing-service, vectorises it (TF-IDF) and partitions it with KMeans, persisting
+Offline: ``POST /build`` streams the **raw** corpus from the doc-store, vectorises it
+in-service (TF-IDF with English stop-words) and partitions it with KMeans, persisting
 the fitted model. Online endpoints are cheap reads off that artifact: the per-cluster
 table (sizes + top terms), a 2-D projection for the scatter plot, a silhouette quality
 score, and assigning a new query to its nearest cluster. Independent of the trained
