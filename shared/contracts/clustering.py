@@ -88,6 +88,28 @@ class AssignResponse(BaseModel):
     assignments: list[Assignment] = Field(default_factory=list)
 
 
+class ClusterMembersRequest(BaseModel):
+    """Ask which docs to *search within* for a query: the members of its nearest clusters.
+
+    Powers retrieval's cluster **pruning** (restrict the search space) — distinct from the
+    older re-ranking of a full-corpus pool."""
+
+    dataset: str
+    query: str = Field(min_length=1, description="The query to locate in cluster space")
+    top_n: int = Field(default=3, ge=1, le=50,
+                       description="Search within this many nearest clusters (1 = strictest pruning)")
+    max_members: Optional[int] = Field(
+        default=None, ge=1, description="Cap the returned candidate pool for latency (None = no cap)"
+    )
+
+
+class ClusterMembersResponse(BaseModel):
+    dataset_id: str
+    cluster_ids: list[int] = Field(default_factory=list,
+                                   description="The nearest clusters chosen ([] if the query has no in-vocab terms)")
+    doc_ids: list[str] = Field(default_factory=list, description="Member doc ids to restrict the search to")
+
+
 class ClusterDeleteResult(BaseModel):
     dataset_id: str
     deleted: bool

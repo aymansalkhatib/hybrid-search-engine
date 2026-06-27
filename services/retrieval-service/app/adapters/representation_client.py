@@ -38,10 +38,16 @@ class RepresentationClient:
             return False
 
     def rank(
-        self, *, dataset: str, model: str, query: str, top_k: int, k1: float, b: float
+        self, *, dataset: str, model: str, query: str, top_k: int, k1: float, b: float,
+        candidates: list[str] | None = None,
     ) -> list[Scored]:
-        """Rank the corpus for ``query`` with one model → ``(doc_id, score)`` desc."""
-        req = RankRequest(dataset=dataset, model=model, query=query, top_k=top_k, k1=k1, b=b)
+        """Rank for ``query`` with one model → ``(doc_id, score)`` desc.
+
+        With ``candidates`` set, the model ranks only within that subset (cluster/topic
+        pruning) instead of the whole corpus."""
+        req = RankRequest(
+            dataset=dataset, model=model, query=query, top_k=top_k, k1=k1, b=b, candidates=candidates
+        )
         resp = self._client.post("/rank", json=req.model_dump())
         resp.raise_for_status()
         body = RankResponse(**resp.json())

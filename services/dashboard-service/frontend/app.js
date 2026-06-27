@@ -834,8 +834,9 @@ async function runSearch() {
     dataset: state.dataset, model: state.seModel, query, with_text: true,
     top_k,
     k1: Number($("#seK1").value), b: Number($("#seB").value),
-    cluster_rerank: extrasOn && $("#seCluster").checked,
-    topic_rerank: extrasOn && $("#seTopic").checked,
+    cluster_prune: extrasOn && $("#seCluster").checked,
+    topic_prune: extrasOn && $("#seTopic").checked,
+    prune_top_n: Number($("#sePruneTopN")?.value) || 3,
   };
   if (state.seModel === "hybrid") {
     if (state.seMode === "parallel") {
@@ -1140,8 +1141,9 @@ async function runEvaluation() {
       max_edit_distance: 2,
     };
   }
-  if ($("#evCluster").checked) payload.cluster_rerank = true;
-  if ($("#evTopic").checked) payload.topic_rerank = true;
+  if ($("#evCluster").checked) payload.cluster_prune = true;
+  if ($("#evTopic").checked) payload.topic_prune = true;
+  if ($("#evCluster").checked || $("#evTopic").checked) payload.prune_top_n = Number($("#evPruneTopN")?.value) || 3;
 
   const r = await api("evaluation", "evaluate", { method: "POST", json: payload });
   if (!r.ok) {

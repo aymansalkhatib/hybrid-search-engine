@@ -1,20 +1,20 @@
-"""HTTP client the retrieval-service uses for cluster-based re-ranking.
+"""HTTP client the retrieval-service uses for cluster-based **pruning**.
 
-Asks the clustering-service which cluster a batch of texts (the query + the candidate
-pool's original texts) falls into. Used only when a search requests ``cluster_rerank``;
-a 404 (no clustering built) or a connection error propagates so the caller can fall
-back to the base ranking instead of failing the search.
+Asks the clustering-service for the member doc ids of the query's nearest clusters — the
+candidate pool a search is restricted to. Used only when a search requests
+``cluster_prune``; a 404 (no clustering built) or a connection error propagates so the
+caller can fall back to a full (un-pruned) search instead of failing.
 """
 
 from __future__ import annotations
 
 import httpx
 
-from shared.contracts import AssignRequest, AssignResponse
+from shared.contracts import ClusterMembersRequest, ClusterMembersResponse
 
 
 class ClusteringClient:
-    """Thin wrapper over the clustering-service ``/assign`` endpoint."""
+    """Thin wrapper over the clustering-service ``/members`` endpoint."""
 
     def __init__(self, base_url: str, timeout: float = 30.0) -> None:
         self._client = httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout)
@@ -25,13 +25,15 @@ class ClusteringClient:
         except httpx.HTTPError:
             return False
 
-    def assign(self, dataset: str, texts: list[str]) -> list[int]:
-        """Return the cluster id for each text (same order). Raises on a non-2xx."""
-        req = AssignRequest(dataset=dataset, texts=texts)
-        resp = self._client.post("/assign", json=req.model_dump())
+    def members(self, dataset: str, query: str, top_n: int, max_members: int | None = None) -> list[str]:
+        """Doc ids in the query's ``top_n`` nearest clusters (the pruned search space).
+
+        Empty when the query has no in-vocabulary terms. Raises on a non-2xx (e.g. 404 =
+        no clustering built) so the caller falls back to a full search."""
+        req = ClusterMembersRequest(dataset=dataset, query=query, top_n=top_n, max_members=max_members)
+        resp = self._client.post("/members", json=req.model_dump())
         resp.raise_for_status()
-        body = AssignResponse(**resp.json())
-        return [a.cluster_id for a in body.assignments]
+        return ClusterMembersResponse(**resp.json()).doc_ids
 
     def close(self) -> None:
         self._client.close()

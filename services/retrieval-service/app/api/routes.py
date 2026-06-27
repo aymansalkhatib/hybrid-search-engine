@@ -21,9 +21,8 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 
 from app.config import settings
-from app.domain.cluster_rerank import cluster_rerank
 from app.domain.hybrid import parallel_search, serial_search
-from app.domain.topic_rerank import topic_rerank
+from app.domain.prune import prune_candidates
 from shared.contracts import (
     BooleanSearchHit,
     BooleanSearchRequest,
@@ -91,31 +90,45 @@ def search(req: SearchRequest, request: Request) -> SearchResponse:
             ),
         )
 
-    # Cluster/topic re-ranking reorders a candidate POOL, so retrieve deeper than top_k.
-    do_rerank = req.cluster_rerank or req.topic_rerank
-    retrieve_k = min(max(req.top_k * 5, 50), 200) if do_rerank else req.top_k
-
     t0 = time.perf_counter()
+
+    # Pruning (extra features §11): restrict the search space to the members of the query's
+    # nearest clusters/topics, so the model scores that smaller candidate pool instead of
+    # the whole corpus. ``candidates`` is None → a normal full search. Falls back to a full
+    # search if a service is down/not built or the query has no in-vocab terms — optional,
+    # never breaks a search.
+    candidates: list[str] | None = None
+    prune_label: str | None = None
+    if req.cluster_prune or req.topic_prune:
+        candidates, labels = prune_candidates(
+            query=req.query, dataset=dataset_id, top_n=req.prune_top_n,
+            cluster_client=state.clustering if req.cluster_prune else None,
+            topic_client=state.topic if req.topic_prune else None,
+            max_members=settings.prune_max_members,
+        )
+        if candidates:
+            prune_label = "+".join(labels)
+
     try:
         if req.model == "hybrid":
             spec = req.hybrid
             if spec.mode == "serial":
                 results = serial_search(
                     client=rep, dataset=dataset_id, first=spec.first, rerank=spec.rerank,
-                    query=req.query, candidates=spec.candidates, top_k=retrieve_k,
-                    k1=req.k1, b=req.b,
+                    query=req.query, candidates=spec.candidates, top_k=req.top_k,
+                    k1=req.k1, b=req.b, restrict_to=candidates,
                 )
             else:
                 results = parallel_search(
                     client=rep, dataset=dataset_id, components=spec.components,
                     query=req.query, fusion=spec.fusion, weights=spec.weights,
-                    rrf_k=spec.rrf_k, top_k=retrieve_k, k1=req.k1, b=req.b,
+                    rrf_k=spec.rrf_k, top_k=req.top_k, k1=req.k1, b=req.b, restrict_to=candidates,
                 )
             mode = spec.mode
         else:
             results = rep.rank(
                 dataset=dataset_id, model=req.model, query=req.query,
-                top_k=retrieve_k, k1=req.k1, b=req.b,
+                top_k=req.top_k, k1=req.k1, b=req.b, candidates=candidates,
             )
             mode = None
     except httpx.HTTPStatusError as exc:
@@ -126,47 +139,17 @@ def search(req: SearchRequest, request: Request) -> SearchResponse:
             detail=f"representation-service error at {settings.representation_url}: {exc}",
         ) from exc
 
-    # Cluster/topic re-ranking (extra features): float candidates sharing the query's
-    # cluster / dominant topic to the top of the pool. Both need the pool's original
-    # texts, which we fetch once and reuse for display. Each falls back to the current
-    # ranking if its service is down or not built — optional, never breaks a search.
-    text_cache: dict[str, str] = {}
-    if do_rerank and results:
-        try:
-            text_cache = state.doc_store.fetch_originals(dataset_id, [d for d, _ in results])
-        except httpx.HTTPError:
-            text_cache = {}
-        if req.cluster_rerank:
-            try:
-                results = cluster_rerank(
-                    results=results, query=req.query, texts=text_cache,
-                    client=state.clustering, dataset=dataset_id, top_k=retrieve_k,
-                )
-                mode = f"{mode}+cluster" if mode else "cluster"
-            except httpx.HTTPError:
-                pass  # clustering unavailable/not built → keep current ranking
-        if req.topic_rerank:
-            try:
-                results = topic_rerank(
-                    results=results, query=req.query, texts=text_cache,
-                    client=state.topic, dataset=dataset_id, top_k=retrieve_k,
-                )
-                mode = f"{mode}+topic" if mode else "topic"
-            except httpx.HTTPError:
-                pass  # topic model unavailable/not built → keep current ranking
+    if prune_label:
+        mode = f"{mode}+{prune_label}" if mode else prune_label
     results = results[:req.top_k]
 
     # Show the ORIGINAL document text — read by id from the doc-store (graded path).
     texts: dict[str, str] = {}
     if req.with_text and results:
-        need = [d for d, _ in results]
-        texts = {d: text_cache[d] for d in need if d in text_cache}
-        missing = [d for d in need if d not in texts]
-        if missing:
-            try:
-                texts.update(state.doc_store.fetch_originals(dataset_id, missing))
-            except httpx.HTTPError:
-                pass  # degrade gracefully: still return the ranking if the doc-store blips
+        try:
+            texts = state.doc_store.fetch_originals(dataset_id, [d for d, _ in results])
+        except httpx.HTTPError:
+            pass  # degrade gracefully: still return the ranking if the doc-store blips
 
     hits = [
         SearchHit(rank=i + 1, doc_id=d, score=round(float(s), 6), text=texts.get(d))

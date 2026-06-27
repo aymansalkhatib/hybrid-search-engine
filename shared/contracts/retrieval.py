@@ -77,14 +77,19 @@ class SearchRequest(BaseModel):
     b: float = Field(default=0.75, ge=0.0, le=1.0, description="BM25 length-normalization")
     hybrid: Optional[HybridSpec] = Field(default=None, description="Required when model='hybrid'")
     with_text: bool = Field(default=True, description="Fetch the original doc text by id for display")
-    # Extra feature (§11): cluster-based re-ranking. When true, the query is assigned to
-    # its document cluster and candidates sharing that cluster are floated to the top —
-    # a toggleable stage, so its before/after effect is evaluable. No-op (falls back to
-    # the base ranking) if no clustering is built for the dataset.
-    cluster_rerank: bool = Field(default=False, description="Re-rank so candidates in the query's cluster come first")
-    # Extra feature (§11): topic-based re-ranking — float candidates sharing the query's
-    # dominant LDA topic to the top. No-op (base ranking) if no topic model is built.
-    topic_rerank: bool = Field(default=False, description="Re-rank so candidates in the query's dominant topic come first")
+    # Extra feature (§11): cluster-based **pruning**. When true, the query is located in
+    # cluster space and the search is restricted to the members of its ``prune_top_n``
+    # nearest clusters — a smaller search space, not a re-ranking. A toggleable stage, so
+    # its before/after effect is evaluable. No-op (falls back to a full search) if no
+    # clustering is built or the query has no in-vocabulary terms.
+    cluster_prune: bool = Field(default=False, description="Search only within the query's nearest clusters")
+    # Extra feature (§11): topic-based pruning — restrict the search to the members of the
+    # query's nearest LDA topics. No-op (full search) if no topic model is built.
+    topic_prune: bool = Field(default=False, description="Search only within the query's nearest topics")
+    prune_top_n: int = Field(
+        default=3, ge=1, le=50,
+        description="When pruning, search within this many nearest clusters/topics (1 = strictest)",
+    )
 
     @model_validator(mode="after")
     def _check(self) -> "SearchRequest":

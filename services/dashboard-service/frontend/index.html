@@ -454,13 +454,18 @@
             </div>
             <div class="opt-row">
               <span class="opt-label">Cluster</span>
-              <label class="switch sm"><input type="checkbox" id="seCluster"><span></span>cluster re-rank</label>
-              <span class="opt-note">floats results in the query's document cluster to the top (needs a built clustering)</span>
+              <label class="switch sm"><input type="checkbox" id="seCluster"><span></span>cluster prune</label>
+              <span class="opt-note">searches only within the query's nearest clusters (needs a built clustering)</span>
             </div>
             <div class="opt-row">
               <span class="opt-label">Topic</span>
-              <label class="switch sm"><input type="checkbox" id="seTopic"><span></span>topic re-rank</label>
-              <span class="opt-note">floats results sharing the query's dominant topic to the top (needs a built topic model)</span>
+              <label class="switch sm"><input type="checkbox" id="seTopic"><span></span>topic prune</label>
+              <span class="opt-note">searches only within the query's nearest topics (needs a built topic model)</span>
+            </div>
+            <div class="opt-row">
+              <span class="opt-label">Prune N</span>
+              <input type="number" id="sePruneTopN" min="1" max="50" value="3" style="width:4rem">
+              <span class="opt-note">how many nearest clusters/topics to search within (1 = strictest)</span>
             </div>
           </div>
 
@@ -724,14 +729,20 @@
 
           <div class="opt-row">
             <span class="opt-label">Cluster</span>
-            <label class="switch sm"><input type="checkbox" id="evCluster"><span></span>cluster re-rank</label>
-            <span class="opt-note">applies cluster-based re-ranking to every run (needs a built clustering) — label it (e.g. <span class="mono">with-clustering</span>) and compare to <span class="mono">baseline</span></span>
+            <label class="switch sm"><input type="checkbox" id="evCluster"><span></span>cluster prune</label>
+            <span class="opt-note">restricts every run to the query's nearest clusters (needs a built clustering) — label it (e.g. <span class="mono">with-clustering</span>) and compare to <span class="mono">baseline</span></span>
           </div>
 
           <div class="opt-row">
             <span class="opt-label">Topic</span>
-            <label class="switch sm"><input type="checkbox" id="evTopic"><span></span>topic re-rank</label>
-            <span class="opt-note">applies topic-based re-ranking to every run (needs a built topic model) — label it (e.g. <span class="mono">with-topics</span>) and compare to <span class="mono">baseline</span></span>
+            <label class="switch sm"><input type="checkbox" id="evTopic"><span></span>topic prune</label>
+            <span class="opt-note">restricts every run to the query's nearest topics (needs a built topic model) — label it (e.g. <span class="mono">with-topics</span>) and compare to <span class="mono">baseline</span></span>
+          </div>
+
+          <div class="opt-row">
+            <span class="opt-label">Prune N</span>
+            <input type="number" id="evPruneTopN" min="1" max="50" value="3" style="width:4rem">
+            <span class="opt-note">how many nearest clusters/topics each run searches within (1 = strictest)</span>
           </div>
 
           <div class="opt-row">

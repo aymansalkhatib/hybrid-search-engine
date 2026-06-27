@@ -43,8 +43,8 @@ async def lifespan(app: FastAPI):
     app.state.representation = RepresentationClient(settings.representation_url)
     app.state.indexing = IndexingClient(settings.indexing_url)
     app.state.doc_store = DocStoreClient(settings.doc_store_url)
-    app.state.clustering = ClusteringClient(settings.clustering_url)  # optional cluster re-ranking
-    app.state.topic = TopicClient(settings.topic_url)                 # optional topic re-ranking
+    app.state.clustering = ClusteringClient(settings.clustering_url)  # optional cluster pruning
+    app.state.topic = TopicClient(settings.topic_url)                 # optional topic pruning
     logger.info(
         "%s v%s ready (representation=%s, indexing=%s, doc_store=%s, clustering=%s, topic=%s)",
         settings.service_name, settings.version,

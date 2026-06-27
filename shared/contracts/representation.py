@@ -191,7 +191,11 @@ ScoringModel = Literal["tfidf", "bm25", "embedding", "bert"]
 
 
 class RankRequest(BaseModel):
-    """Rank the whole corpus for a query with **one** model — the core scoring call."""
+    """Rank the corpus for a query with **one** model — the core scoring call.
+
+    With ``candidates`` set, the model ranks **only** those doc ids (a restricted search
+    space) instead of the whole corpus — this is how retrieval prunes a search to a
+    cluster's / topic's members."""
 
     dataset: str
     model: ScoringModel = "bm25"
@@ -200,6 +204,10 @@ class RankRequest(BaseModel):
     # BM25 per-query tuning (ignored by the other models)
     k1: float = Field(default=1.5, ge=0.0, le=10.0, description="BM25 term-saturation")
     b: float = Field(default=0.75, ge=0.0, le=1.0, description="BM25 length-normalization")
+    candidates: Optional[list[str]] = Field(
+        default=None,
+        description="Restrict ranking to these doc ids (cluster/topic pruning); None = whole corpus",
+    )
 
 
 class ScoredDoc(BaseModel):

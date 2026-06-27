@@ -37,13 +37,19 @@ class Settings(BaseSettings):
     doc_store_url: str = Field(
         default="http://localhost:8007", validation_alias="DOC_STORE_URL"
     )
-    # Extra features (§11): cluster- and topic-based re-ranking. Optional — only called
-    # when a search sets cluster_rerank / topic_rerank; defaults so it runs standalone.
+    # Extra features (§11): cluster- and topic-based **pruning** (restrict the search to
+    # the query's nearest groups). Optional — only called when a search sets cluster_prune
+    # / topic_prune; defaults so it runs standalone.
     clustering_url: str = Field(
         default="http://localhost:8008", validation_alias="CLUSTERING_URL"
     )
     topic_url: str = Field(
         default="http://localhost:8009", validation_alias="TOPIC_URL"
+    )
+    # Cap the pruned candidate pool so a search stays within the latency budget even when a
+    # cluster/topic is huge (the model still re-scores every candidate). None = no cap.
+    prune_max_members: int = Field(
+        default=50000, ge=1, validation_alias="PRUNE_MAX_MEMBERS"
     )
 
     @property

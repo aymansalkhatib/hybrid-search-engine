@@ -25,6 +25,8 @@ from shared.contracts import (
     ClusterBuildRequest,
     ClusterDeleteResult,
     ClusterInfo,
+    ClusterMembersRequest,
+    ClusterMembersResponse,
     ClusterPlotResponse,
     ClusterPoint,
     ClusterStats,
@@ -130,6 +132,9 @@ def build(req: ClusterBuildRequest, request: Request) -> JobStatus:
             n_clusters=n_clusters,
             max_features=max_features,
             docs=doc_store.iter_docs(dataset_id, stop=max_docs),
+            # Fit on the sample, but assign membership over the WHOLE corpus so retrieval
+            # pruning can reach every ingested doc, not just the sampled ones.
+            member_docs=doc_store.iter_docs(dataset_id),
             batch_size=settings.preprocess_batch_size,
             plot_sample=settings.plot_sample_size,
             on_progress=lambda n: progress.update(processed=n),
@@ -192,6 +197,16 @@ def assign(req: AssignRequest, request: Request) -> AssignResponse:
         assignments=[Assignment(text=t, cluster_id=c, top_terms=terms)
                      for t, (c, terms) in zip(req.texts, pairs)],
     )
+
+
+@router.post("/members", response_model=ClusterMembersResponse)
+def members(req: ClusterMembersRequest, request: Request) -> ClusterMembersResponse:
+    """Return the doc ids in the query's ``top_n`` nearest clusters — the candidate pool
+    retrieval **prunes** the search down to (search within the cluster instead of the whole
+    corpus). Empty when the query has no in-vocabulary terms (caller falls back to a full search)."""
+    model = _require(request, req.dataset)
+    cluster_ids, doc_ids = model.nearest_members(req.query, req.top_n, req.max_members)
+    return ClusterMembersResponse(dataset_id=model.dataset_id, cluster_ids=cluster_ids, doc_ids=doc_ids)
 
 
 # ---- jobs / delete -------------------------------------------------------

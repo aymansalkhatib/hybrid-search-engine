@@ -82,8 +82,9 @@ def run_evaluation(
     set_message: Callable[[str], None],
     refine_options: Optional[RefineOptions] = None,
     refinement: Optional[RefinementClient] = None,
-    cluster_rerank: bool = False,
-    topic_rerank: bool = False,
+    cluster_prune: bool = False,
+    topic_prune: bool = False,
+    prune_top_n: int = 3,
 ) -> tuple[EvaluationReport, Optional[dict]]:
     """Evaluate every run config on the dataset's judged queries.
 
@@ -129,7 +130,8 @@ def run_evaluation(
             spec=spec, judged=judged, queries=search_queries, qrels_eval=qrels_eval,
             metrics=metrics, top_k=top_k, dataset_id=dataset_id, retrieval=retrieval,
             concurrency=concurrency, advance=advance, per_query=per_query,
-            refine=refine_params, cluster_rerank=cluster_rerank, topic_rerank=topic_rerank,
+            refine=refine_params, cluster_prune=cluster_prune, topic_prune=topic_prune,
+            prune_top_n=prune_top_n,
         )
         run_results.append(result)
         if pq is not None:
@@ -196,8 +198,9 @@ def _evaluate_one(
     advance: Callable[[int], None],
     per_query: bool,
     refine: Optional[dict] = None,
-    cluster_rerank: bool = False,
-    topic_rerank: bool = False,
+    cluster_prune: bool = False,
+    topic_prune: bool = False,
+    prune_top_n: int = 3,
 ) -> tuple[RunEvaluation, Optional[PerQueryScores]]:
     """Run one model config over all judged queries and score it. Never raises for a model
     that simply isn't built — that's recorded as the run's ``error`` instead."""
@@ -205,10 +208,10 @@ def _evaluate_one(
     params = _run_params(spec)
     if refine is not None:
         params = {**params, "refine": refine}
-    if cluster_rerank:
-        params = {**params, "cluster_rerank": True}
-    if topic_rerank:
-        params = {**params, "topic_rerank": True}
+    if cluster_prune:
+        params = {**params, "cluster_prune": True, "prune_top_n": prune_top_n}
+    if topic_prune:
+        params = {**params, "topic_prune": True, "prune_top_n": prune_top_n}
 
     if not judged:
         return RunEvaluation(label=spec.label, model=spec.model, params=params), None
@@ -217,7 +220,7 @@ def _evaluate_one(
     # bad request fails this run immediately, without hammering retrieval N times.
     first = judged[0]
     try:
-        hits, mode, took = retrieval.search(dataset=dataset_id, spec=spec, query=queries[first], top_k=top_k, cluster_rerank=cluster_rerank, topic_rerank=topic_rerank)
+        hits, mode, took = retrieval.search(dataset=dataset_id, spec=spec, query=queries[first], top_k=top_k, cluster_prune=cluster_prune, topic_prune=topic_prune, prune_top_n=prune_top_n)
     except httpx.HTTPStatusError as exc:
         advance(len(judged))  # keep the overall progress bar honest
         return RunEvaluation(
@@ -237,7 +240,7 @@ def _evaluate_one(
 
     def work(qid: str) -> tuple[str, dict[str, float], float]:
         try:
-            h, _, ms = retrieval.search(dataset=dataset_id, spec=spec, query=queries[qid], top_k=top_k, cluster_rerank=cluster_rerank, topic_rerank=topic_rerank)
+            h, _, ms = retrieval.search(dataset=dataset_id, spec=spec, query=queries[qid], top_k=top_k, cluster_prune=cluster_prune, topic_prune=topic_prune, prune_top_n=prune_top_n)
             return qid, {d: s for d, s in h}, ms
         except httpx.HTTPError:
             # A transient blip on one query degrades to an empty result (scored 0) rather

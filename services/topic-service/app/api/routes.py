@@ -24,6 +24,8 @@ from shared.contracts import (
     TopicDeleteResult,
     TopicInfo,
     TopicInference,
+    TopicMembersRequest,
+    TopicMembersResponse,
     TopicStats,
     TopicStatusResponse,
     TopicWeight,
@@ -135,6 +137,9 @@ def build(req: TopicBuildRequest, request: Request) -> JobStatus:
             max_iter=max_iter,
             max_df=max_df,
             docs=doc_store.iter_docs(dataset_id, stop=max_docs),
+            # Fit on the sample, but assign membership over the WHOLE corpus so retrieval
+            # pruning can reach every ingested doc, not just the sampled ones.
+            member_docs=doc_store.iter_docs(dataset_id),
             batch_size=settings.stream_batch_size,
             on_progress=lambda n: progress.update(processed=n),
         )
@@ -188,6 +193,16 @@ def infer(req: InferRequest, request: Request) -> InferResponse:
             distribution=[TopicWeight(topic_id=t, label=model.label(t), weight=w) for t, w in enumerate(dist)],
         ))
     return InferResponse(dataset_id=model.dataset_id, n_topics=model.n_topics, results=results)
+
+
+@router.post("/members", response_model=TopicMembersResponse)
+def members(req: TopicMembersRequest, request: Request) -> TopicMembersResponse:
+    """Return the doc ids in the query's ``top_n`` nearest topics — the candidate pool
+    retrieval **prunes** the search down to (search within the topic instead of the whole
+    corpus). Empty when the query has no in-vocabulary terms (caller falls back to a full search)."""
+    model = _require(request, req.dataset)
+    topic_ids, doc_ids = model.nearest_members(req.query, req.top_n, req.max_members)
+    return TopicMembersResponse(dataset_id=model.dataset_id, topic_ids=topic_ids, doc_ids=doc_ids)
 
 
 # ---- jobs / delete -------------------------------------------------------

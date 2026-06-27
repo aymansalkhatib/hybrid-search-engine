@@ -29,7 +29,9 @@ from sklearn.feature_extraction.text import CountVectorizer
 logger = logging.getLogger("topic-service")
 
 # Bump when the persisted shape changes so stale pickles are auto-rebuilt (see TopicStore.load).
-SCHEMA_VERSION = 2
+# v3 adds per-topic membership (doc ids by dominant topic) so retrieval can *prune* the
+# search space to the query's nearest topics instead of merely re-ranking a pool.
+SCHEMA_VERSION = 3
 
 _TOP_TERMS = 12
 NO_TOPIC = -1   # a text with no in-vocabulary terms has no dominant topic
@@ -46,6 +48,7 @@ class TopicModel:
     sizes: list[int]                              # docs whose dominant topic is t
     top_terms: list[list[str]]                    # per topic
     weights: list[list[float]]                    # per topic, aligned with top_terms
+    members: list[list[str]]                      # topic_id → doc ids whose dominant topic is it
     perplexity: float | None
     vectorizer: CountVectorizer
     lda: LatentDirichletAllocation
@@ -73,6 +76,65 @@ class TopicModel:
             out.append((dominant, [round(p, 4) for p in probs]))
         return out
 
+    def nearest_members(
+        self, query: str, top_n: int, max_members: int | None = None
+    ) -> tuple[list[int], list[str]]:
+        """Pruning primitive: pick the query's ``top_n`` **highest-weight** topics and return
+        the doc ids whose dominant topic is one of them — the candidate pool retrieval scores
+        *instead of* the whole corpus. Returns ``([], [])`` for a query with no in-vocab terms
+        (caller falls back to a full search). ``max_members`` caps the pool for latency."""
+        counts = self.vectorizer.transform([query])
+        if counts.getnnz(axis=1)[0] == 0:
+            return [], []
+        dist = self.lda.transform(counts)[0]
+        order = np.argsort(dist)[::-1][: max(1, top_n)]
+        topic_ids = [int(t) for t in order]
+        ids: list[str] = []
+        for t in topic_ids:
+            ids.extend(self.members[t])
+            if max_members is not None and len(ids) >= max_members:
+                return topic_ids, ids[:max_members]
+        return topic_ids, ids
+
+
+def _assign_members(
+    model_parts: tuple[CountVectorizer, LatentDirichletAllocation],
+    n_topics: int,
+    member_docs: Iterable,
+    batch_size: int,
+) -> list[list[str]]:
+    """Stream the (full) corpus and bucket each doc id under its dominant topic.
+
+    A second cheap pass (transform → argmax, **no re-fit**) so membership covers every
+    ingested doc — even though the model was *fit* on a sample — which is what lets retrieval
+    prune to a topic without losing the rest of the corpus. Docs with no in-vocabulary terms
+    have no dominant topic and are skipped."""
+    vectorizer, lda = model_parts
+    members: list[list[str]] = [[] for _ in range(n_topics)]
+    buf_ids: list[str] = []
+    buf_texts: list[str] = []
+
+    def flush() -> None:
+        if not buf_texts:
+            return
+        counts = vectorizer.transform(buf_texts)
+        nnz = counts.getnnz(axis=1)
+        dominant = lda.transform(counts).argmax(axis=1)
+        for i, t in enumerate(dominant):
+            if nnz[i] > 0:
+                members[int(t)].append(buf_ids[i])
+        buf_ids.clear()
+        buf_texts.clear()
+
+    for doc in member_docs:
+        if doc.text and doc.text.strip():
+            buf_ids.append(doc.doc_id)
+            buf_texts.append(doc.text)
+            if len(buf_texts) >= batch_size:
+                flush()
+    flush()
+    return members
+
 
 def build_topics(
     *,
@@ -81,16 +143,25 @@ def build_topics(
     max_features: int,
     max_iter: int,
     max_df: float = 0.5,
-    docs: Iterable,                 # yields objects exposing .text (capped to max_docs by the caller)
+    docs: Iterable,                 # yields objects exposing .doc_id/.text (the fit sample, capped to max_docs)
+    member_docs: Iterable | None = None,  # full corpus for membership (defaults to the fit sample)
     batch_size: int = 1000,
     on_progress: Callable[[int], None] | None = None,
 ) -> TopicModel:
-    """Stream raw docs → counts → LDA → summarise. Returns the fitted model."""
+    """Stream raw docs → counts → LDA → summarise. Returns the fitted model.
+
+    The model is *fit* on ``docs`` (a sample). Membership (topic → doc ids, for retrieval
+    pruning) is then assigned over ``member_docs`` — the full corpus — so pruning can reach
+    every ingested doc. If ``member_docs`` is None the fit sample's own dominant topics are
+    reused as membership.
+    """
     texts: list[str] = []
+    sample_ids: list[str] = []
     processed = 0
     for doc in docs:
         if doc.text and doc.text.strip():
             texts.append(doc.text)
+            sample_ids.append(doc.doc_id)
         processed += 1
         if on_progress is not None and processed % batch_size == 0:
             on_progress(processed)
@@ -125,6 +196,16 @@ def build_topics(
         weights.append([round(float(components[t][i] / total), 5) for i in order])
     sizes = np.bincount(doc_topic.argmax(axis=1), minlength=n_topics).astype(int).tolist()
 
+    # Membership (topic → doc ids) for retrieval pruning. Assign over the full corpus when
+    # given (so pruning reaches every doc); otherwise reuse the fit sample's dominant topics.
+    if member_docs is not None:
+        logger.info("assigning corpus membership for pruning")
+        members = _assign_members((vectorizer, lda), n_topics, member_docs, batch_size)
+    else:
+        members = [[] for _ in range(n_topics)]
+        for doc_id, t in zip(sample_ids, doc_topic.argmax(axis=1)):
+            members[int(t)].append(doc_id)
+
     perplexity: float | None = None
     try:
         perplexity = float(lda.perplexity(matrix))
@@ -141,6 +222,7 @@ def build_topics(
         sizes=sizes,
         top_terms=top_terms,
         weights=weights,
+        members=members,
         perplexity=perplexity,
         vectorizer=vectorizer,
         lda=lda,

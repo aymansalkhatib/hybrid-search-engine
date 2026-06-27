@@ -87,21 +87,25 @@ class EvaluateRequest(BaseModel):
             "and compare reports. Refinement is applied once per query and shared across all runs."
         ),
     )
-    cluster_rerank: bool = Field(
+    cluster_prune: bool = Field(
         default=False,
         description=(
-            "Apply cluster-based re-ranking to every run (extra feature §11): candidates in "
-            "the query's cluster are floated to the top. False = the 'before' baseline; set it "
-            "and label the report (e.g. 'with-clustering') to measure the before/after effect."
+            "Apply cluster-based **pruning** to every run (extra feature §11): the search is "
+            "restricted to the members of the query's nearest clusters. False = the 'before' "
+            "baseline; set it and label the report (e.g. 'with-clustering') for the before/after effect."
         ),
     )
-    topic_rerank: bool = Field(
+    topic_prune: bool = Field(
         default=False,
         description=(
-            "Apply topic-based re-ranking to every run (extra feature §11): candidates sharing "
-            "the query's dominant LDA topic are floated to the top. Label the report "
+            "Apply topic-based **pruning** to every run (extra feature §11): the search is "
+            "restricted to the members of the query's nearest LDA topics. Label the report "
             "(e.g. 'with-topics') and compare to 'baseline' for the before/after effect."
         ),
+    )
+    prune_top_n: int = Field(
+        default=3, ge=1, le=50,
+        description="When pruning, search within this many nearest clusters/topics (1 = strictest)",
     )
     force: bool = Field(default=False, description="Re-run and overwrite even if a report with this label exists")
 

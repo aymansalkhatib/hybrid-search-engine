@@ -136,9 +136,9 @@ def evaluate(req: EvaluateRequest, request: Request) -> JobStatus:
                 "it refines the test queries for this with-refinement run"
             ),
         )
-    # Cluster re-ranking is optional too; only require clustering to be up (and built)
+    # Cluster pruning is optional too; only require clustering to be up (and built)
     # when this run asks for it, so a "with-clustering" report isn't silently == baseline.
-    if req.cluster_rerank:
+    if req.cluster_prune:
         try:
             cl = httpx.get(f"{settings.clustering_url}/status", params={"dataset": dataset_id}, timeout=5.0)
             built = cl.status_code == 200 and cl.json().get("built")
@@ -153,8 +153,8 @@ def evaluate(req: EvaluateRequest, request: Request) -> JobStatus:
                     "else a with-clustering run would just equal the baseline"
                 ),
             )
-    # Topic re-ranking likewise requires a built topic model when this run asks for it.
-    if req.topic_rerank:
+    # Topic pruning likewise requires a built topic model when this run asks for it.
+    if req.topic_prune:
         try:
             tp = httpx.get(f"{settings.topic_url}/status", params={"dataset": dataset_id}, timeout=5.0)
             built = tp.status_code == 200 and tp.json().get("built")
@@ -182,8 +182,9 @@ def evaluate(req: EvaluateRequest, request: Request) -> JobStatus:
     doc_store = state.doc_store
     refinement = state.refinement
     refine_options = req.refine
-    cluster_rerank = req.cluster_rerank
-    topic_rerank = req.topic_rerank
+    cluster_prune = req.cluster_prune
+    topic_prune = req.topic_prune
+    prune_top_n = req.prune_top_n
     concurrency = settings.concurrency
     label = req.label
 
@@ -209,8 +210,9 @@ def evaluate(req: EvaluateRequest, request: Request) -> JobStatus:
             set_message=lambda m: progress.update(message=m),
             refine_options=refine_options,
             refinement=refinement,
-            cluster_rerank=cluster_rerank,
-            topic_rerank=topic_rerank,
+            cluster_prune=cluster_prune,
+            topic_prune=topic_prune,
+            prune_top_n=prune_top_n,
         )
         store.save(report)
         if sidecar is not None:

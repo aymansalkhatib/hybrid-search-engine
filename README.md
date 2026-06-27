@@ -60,7 +60,7 @@ per-service prefix. Only three containers publish a host port — the gateway, t
 | preprocessing-service | 8001 | `:8000/preprocessing` | Normalize, tokenize, stopwords, stem, lemmatize |
 | indexing-service | 8002 | `:8000/indexing` | Inverted index (df · tf · avgdl) + Boolean match |
 | representation-service | 8003 | `:8000/representation` | TF-IDF / Word2Vec / BERT / BM25 + scoring primitives |
-| retrieval-service | 8004 | `:8000/retrieval` | Match & rank · Hybrid + fusion · Boolean · cluster/topic re-rank |
+| retrieval-service | 8004 | `:8000/retrieval` | Match & rank · Hybrid + fusion · Boolean · cluster/topic prune |
 | query-refinement-service | 8005 | `:8000/refinement` | Spell-correction · synonym expansion · suggestion |
 | evaluation-service | 8006 | `:8000/evaluation` | MAP · nDCG · Recall · P@10 · before/after reports |
 | doc-store-service | 8007 | `:8000/docstore` (+ `/catalog`, `/datasets/*`) | Docs + queries + qrels in MongoDB, read by ID |

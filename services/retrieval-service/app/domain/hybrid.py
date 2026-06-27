@@ -39,9 +39,14 @@ def serial_search(
     top_k: int,
     k1: float,
     b: float,
+    restrict_to: list[str] | None = None,
 ) -> list[Scored]:
-    """``first`` retrieves ``candidates`` docs → ``rerank`` re-scores & reorders them."""
-    pool = client.rank(dataset=dataset, model=first, query=query, top_k=candidates, k1=k1, b=b)
+    """``first`` retrieves ``candidates`` docs → ``rerank`` re-scores & reorders them.
+
+    ``restrict_to`` (cluster/topic pruning) limits the first stage to a candidate subset."""
+    pool = client.rank(
+        dataset=dataset, model=first, query=query, top_k=candidates, k1=k1, b=b, candidates=restrict_to
+    )
     if not pool:
         return []
     cand_ids = [doc_id for doc_id, _ in pool]
@@ -64,8 +69,11 @@ def parallel_search(
     top_k: int,
     k1: float,
     b: float,
+    restrict_to: list[str] | None = None,
 ) -> list[Scored]:
-    """Each component searches independently; their lists are fused into one ranking."""
+    """Each component searches independently; their lists are fused into one ranking.
+
+    ``restrict_to`` (cluster/topic pruning) limits every component to a candidate subset."""
     candidate_pool = _pool(top_k)
 
     # The components are independent, so issue their /rank calls concurrently instead of
@@ -73,7 +81,10 @@ def parallel_search(
     # to be 3 sequential calls). httpx.Client is thread-safe, and ThreadPoolExecutor.map
     # preserves component order so ``weights`` still line up in weighted fusion.
     def _rank(name: str) -> list[Scored]:
-        return client.rank(dataset=dataset, model=name, query=query, top_k=candidate_pool, k1=k1, b=b)
+        return client.rank(
+            dataset=dataset, model=name, query=query, top_k=candidate_pool, k1=k1, b=b,
+            candidates=restrict_to,
+        )
 
     if not components:
         ranked_lists = []

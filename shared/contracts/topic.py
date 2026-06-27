@@ -88,6 +88,28 @@ class InferResponse(BaseModel):
     results: list[TopicInference] = Field(default_factory=list)
 
 
+class TopicMembersRequest(BaseModel):
+    """Ask which docs to *search within* for a query: the members of its nearest topics.
+
+    Powers retrieval's topic **pruning** (restrict the search space) — distinct from the
+    older re-ranking of a full-corpus pool."""
+
+    dataset: str
+    query: str = Field(min_length=1, description="The query to locate in topic space")
+    top_n: int = Field(default=3, ge=1, le=50,
+                       description="Search within this many highest-weight topics (1 = strictest pruning)")
+    max_members: Optional[int] = Field(
+        default=None, ge=1, description="Cap the returned candidate pool for latency (None = no cap)"
+    )
+
+
+class TopicMembersResponse(BaseModel):
+    dataset_id: str
+    topic_ids: list[int] = Field(default_factory=list,
+                                 description="The nearest topics chosen ([] if the query has no in-vocab terms)")
+    doc_ids: list[str] = Field(default_factory=list, description="Member doc ids to restrict the search to")
+
+
 class TopicDeleteResult(BaseModel):
     dataset_id: str
     deleted: bool

@@ -294,9 +294,17 @@ def rank(req: RankRequest, request: Request) -> RankResponse:
     state = request.app.state
     _require_preprocessing(state, [rep])
     normalize = _make_normalizer(state)
-    results = rep.search(
-        raw_query=req.query, top_k=req.top_k, normalize=normalize, k1=req.k1, b=req.b
-    )
+    if req.candidates is not None:
+        # Pruned search: score only the candidate ids (a cluster/topic's members) and rank
+        # those — reuses the model's score_docs primitive, so no per-model change is needed.
+        scored = rep.score_docs(
+            doc_ids=req.candidates, raw_query=req.query, normalize=normalize, k1=req.k1, b=req.b
+        )
+        results = sorted(scored.items(), key=lambda kv: kv[1], reverse=True)[: req.top_k]
+    else:
+        results = rep.search(
+            raw_query=req.query, top_k=req.top_k, normalize=normalize, k1=req.k1, b=req.b
+        )
     return RankResponse(
         dataset_id=rep.dataset_id,
         model=req.model,
